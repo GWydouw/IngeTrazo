@@ -25,10 +25,15 @@ original observations below are retained as reproduction history.
 
 Validation after these fixes: **111 passed** on macOS with Qt 6.11.2,
 covering all seven originally failing test modules plus text-tool, frame
-background, raster pen and shortcut integration tests. Before publication,
-the fast suite passed in a clean checkout: **3,579 passed, 29 skipped,
-805 deselected**. The nine theme tests ran in a separate process to avoid
-the accumulated-window slowdown observed during the original investigation.
+background, raster pen and shortcut integration tests.
+
+The full fast suite was subsequently rerun on this upstream-based PR branch
+with Python 3.12.13, Qt offscreen and isolated application data:
+**3,567 passed, 29 skipped, 805 deselected**. All nine theme tests passed in a
+fresh process; the remaining modules reported **3,558 passed, 29 skipped**.
+Pytest wrote its final summary and JUnit report, but Qt teardown then stalled;
+the remaining process was terminated after the passing summary. There were
+no assertion failures; a clean process exit remains unverified.
 
 ## Reproduction environment
 
