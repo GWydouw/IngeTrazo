@@ -3348,6 +3348,11 @@ class LayersPanel(QWidget):
     def refresh(self) -> None:
         from PySide6.QtWidgets import QTreeWidgetItem
         from core.layers import DEFAULT_LAYER, LayerFolder
+        from PySide6.QtCore import QCollator
+        collator = QCollator()
+        collator.setCaseSensitivity(Qt.CaseInsensitive)
+        collator.setNumericMode(True)
+        collator.setIgnorePunctuation(True)
         current = self.tree.currentItem()
         current_value = current.data(0, Qt.UserRole) if current else None
         selected = [item.data(0, Qt.UserRole) for item in self.tree.selectedItems()]
@@ -3388,8 +3393,12 @@ class LayersPanel(QWidget):
             def obj(item):
                 value = item.data(0, Qt.UserRole)
                 return value if isinstance(value, LayerFolder) else scene.layer(value)
-            children.sort(key=lambda item: (-1 if item.data(0, Qt.UserRole) == DEFAULT_LAYER
-                                             else obj(item).position))
+            def sort_key(item):
+                value = obj(item)
+                category = (0 if item.data(0, Qt.UserRole) == DEFAULT_LAYER
+                            else 1 if isinstance(value, LayerFolder) else 2)
+                return category, collator.sortKey(value.name)
+            children.sort(key=sort_key)
             parent.addChildren(children)
             for item in children:
                 value = obj(item)

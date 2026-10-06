@@ -124,11 +124,11 @@ def test_add_and_collapse(panel):
     assert root.parent_id == scene.layer_folders[-1].uid
 
 
-def test_legacy_order_and_invalid_parents(panel):
+def test_alphabetical_order_and_invalid_parents(panel):
     scene = panel._scene()
     scene.layers += [Layer.from_dict({"name": name}) for name in ("B", "A", "C")]
     panel.refresh()
-    assert [panel.tree.topLevelItem(i).text(0) for i in range(4)] == [DEFAULT_LAYER, "B", "A", "C"]
+    assert [panel.tree.topLevelItem(i).text(0) for i in range(4)] == [DEFAULT_LAYER, "A", "B", "C"]
     root = LayerFolder("Root", uid="a", parent_id="b")
     child = LayerFolder("Child", uid="b", parent_id="a", visible=False)
     scene.layer_folders = [root, child]
@@ -271,7 +271,8 @@ def test_delete_multiple_folders_and_layers_keeps_unselected_contents(panel, par
     tree = panel.tree
     building = tree.topLevelItem(1)
     ground = building.child(0)
-    walls = ground.child(0)
+    walls = next(ground.child(i) for i in range(ground.childCount())
+                 if ground.child(i).text(0) == 'Walls')
     furniture = tree.topLevelItem(2)
     items = [building, ground, walls, furniture, tree.topLevelItem(0)]
     for item in items if parent_first else reversed(items):
@@ -429,3 +430,29 @@ def test_selected_folder_and_layer_lock_together_preserving_visibility(panel):
     assert not root.locked and not scene.layer('Furniture').locked
     assert scene.layer_state('Walls') == (True, False)
     assert root.visible and not scene.layer('Furniture').visible
+
+
+def test_folders_before_layers_sorted_by_name_at_every_level(panel):
+    scene = panel._scene()
+    z = LayerFolder('Z folder', position=0)
+    a = LayerFolder('A folder', position=99)
+    ten = LayerFolder('10 folder', parent_id=a.uid, position=0)
+    two = LayerFolder('2 folder', parent_id=a.uid, position=99)
+    scene.layer_folders = [z, ten, a, two]
+    scene.layers += [Layer('Z layer', position=0), Layer('A layer', position=99),
+                     Layer('z nested', folder_id=a.uid, position=0),
+                     Layer('a nested', folder_id=a.uid, position=99)]
+    panel.refresh()
+    tree = panel.tree
+    assert [tree.topLevelItem(i).text(0) for i in range(tree.topLevelItemCount())] == [
+        DEFAULT_LAYER, 'A folder', 'Z folder', 'A layer', 'Z layer']
+    parent = tree.topLevelItem(1)
+    assert [parent.child(i).text(0) for i in range(parent.childCount())] == [
+        '2 folder', '10 folder', 'a nested', 'z nested']
+    # Renaming re-sorts while preserving current and selected rows.
+    tree.setCurrentItem(tree.topLevelItem(4))
+    tree.topLevelItem(3).setSelected(True)
+    tree.currentItem().setText(0, '0 layer')
+    assert [tree.topLevelItem(i).text(0) for i in range(3, 5)] == ['0 layer', 'A layer']
+    assert tree.currentItem().text(0) == '0 layer'
+    assert {i.text(0) for i in tree.selectedItems()} == {'0 layer', 'A layer'}
