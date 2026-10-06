@@ -17,7 +17,7 @@ pattern); Cancel touches nothing.
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QSettings
+from PySide6.QtCore import QSettings, Slot
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -36,6 +36,24 @@ from PySide6.QtWidgets import (
 
 from core.i18n import LANGUAGE_NAMES as _LANGUAGE_NAMES
 from core.i18n import available_languages, current_language, tr
+
+
+class _NdofStatusLabel(QLabel):
+    """Track connection status until Qt destroys the receiver widget."""
+
+    def __init__(self, device, parent=None):
+        super().__init__(parent)
+        self._device = device
+        self.refresh()
+        device.status_changed.connect(self.refresh)
+
+    @Slot()
+    def refresh(self):
+        name = self._device.backend_name
+        self.setText(tr("Device driver found: {name}", name=name) if name else tr(
+            "No 3D mouse connection. On Linux start spacenavd; "
+            "on Windows and macOS install the 3Dconnexion driver. "
+            "Connection is retried automatically."))
 
 
 #: The import dialogs' unit vocabularies (must match the dialogs in
@@ -228,20 +246,7 @@ class PreferencesDialog(QDialog):
             "Pan and zoom only (no rotation — for drawing in plan)"))
         self._ndof_lock.setChecked(nd.lock_rotation)
         form.addRow("", self._ndof_lock)
-        device = shared_input()
-        status = QLabel()
-
-        def update_ndof_status():
-            name = device.backend_name
-            status.setText(tr("Device driver found: {name}", name=name) if name else tr(
-                "No 3D mouse connection. On Linux start spacenavd; "
-                "on Windows and macOS install the 3Dconnexion driver. "
-                "Connection is retried automatically."))
-
-        update_ndof_status()
-        device.status_changed.connect(update_ndof_status)
-        self.finished.connect(lambda _result: device.status_changed.disconnect(
-            update_ndof_status))
+        status = _NdofStatusLabel(shared_input(), self)
         status.setWordWrap(True)
         form.addRow("", status)
         tabs.addTab(mouse3d, tr("3D Mouse"))
