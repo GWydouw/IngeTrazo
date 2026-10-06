@@ -217,6 +217,47 @@ class Scene:
             cursor = folder.parent_id
         return visible, locked
 
+    def layer_ancestors(self, name):
+        """A tag (or folder) followed by its folder ancestors, cycle-safe."""
+        from core.layers import DEFAULT_LAYER, LayerFolder
+        is_folder = isinstance(name, LayerFolder)
+        layer = name if is_folder else self.layer(name)
+        if layer is None:
+            return
+        yield layer
+        folders = {folder.uid: folder for folder in self.layer_folders}
+        cursor = (layer.parent_id if is_folder else
+                  layer.folder_id if name != DEFAULT_LAYER else None)
+        seen = set()
+        while cursor in folders and cursor not in seen:
+            seen.add(cursor)
+            folder = folders[cursor]
+            yield folder
+            cursor = folder.parent_id
+
+    def layer_setting(self, name, attribute, default=None):
+        """Nearest explicit appearance setting on a tag or folder."""
+        for item in self.layer_ancestors(name):
+            value = getattr(item, attribute, None)
+            if value is not None:
+                return value
+        return default
+
+    def layer_opacity(self, name, additional_layers=()):
+        """Multiply tag/folder opacity, counting shared ancestors only once."""
+        if isinstance(additional_layers, str):
+            additional_layers = (additional_layers,)
+        opacity, seen = 1.0, set()
+        for start in (name, *(additional_layers or ())):
+            for item in self.layer_ancestors(start):
+                if id(item) not in seen:
+                    seen.add(id(item))
+                    opacity *= 1.0 - item.transparency / 100.0
+        return opacity
+
+    def layer_has_transparency(self):
+        return any(item.transparency for item in (*self.layers, *self.layer_folders))
+
     @staticmethod
     def _object_hidden(entity) -> bool:
         """Hide on an OBJECT (a group or component). Edges carry

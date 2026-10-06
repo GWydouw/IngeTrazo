@@ -216,16 +216,16 @@ def test_multiple_selection_survives_refresh_and_rename(panel):
     walls = tree.topLevelItem(1).child(0).child(0)
     furniture = tree.topLevelItem(2)
     QTest.mouseClick(tree.viewport(), Qt.LeftButton, Qt.NoModifier,
-                     tree.visualItemRect(walls).center())
+                     tree.visualRect(tree.indexFromItem(walls, 0)).center())
     QTest.mouseClick(tree.viewport(), Qt.LeftButton, Qt.ShiftModifier,
-                     tree.visualItemRect(furniture).center())
-    assert {i.data(0, Qt.UserRole) for i in tree.selectedItems()} == {'Walls', 'Furniture'}
+                     tree.visualRect(tree.indexFromItem(furniture, 0)).center())
+    assert {panel._item_value(i) for i in tree.selectedItems()} == {'Walls', 'Furniture'}
     panel.refresh()
-    assert {i.data(0, Qt.UserRole) for i in tree.selectedItems()} == {'Walls', 'Furniture'}
-    assert tree.currentItem().data(0, Qt.UserRole) == 'Furniture'
+    assert {panel._item_value(i) for i in tree.selectedItems()} == {'Walls', 'Furniture'}
+    assert panel._item_value(tree.currentItem()) == 'Furniture'
     tree.topLevelItem(1).child(0).child(0).setText(0, 'Structure')
-    assert {i.data(0, Qt.UserRole) for i in tree.selectedItems()} == {'Structure', 'Furniture'}
-    assert tree.currentItem().data(0, Qt.UserRole) == 'Furniture'
+    assert {panel._item_value(i) for i in tree.selectedItems()} == {'Structure', 'Furniture'}
+    assert panel._item_value(tree.currentItem()) == 'Furniture'
 
 
 def test_move_multiple_layers_and_parent_to_root(panel):
@@ -303,9 +303,9 @@ def test_context_menu_keeps_multiple_selection(panel, monkeypatch):
         def exec(self, *args):
             pass
     monkeypatch.setattr(tray, 'QMenu', Menu)
-    panel._on_context_menu(tree.visualItemRect(walls).center())
-    assert {i.data(0, Qt.UserRole) for i in tree.selectedItems()} == {'Walls', 'Furniture'}
-    assert tree.currentItem().data(0, Qt.UserRole) == 'Walls'
+    panel._on_context_menu(tree.visualRect(tree.indexFromItem(walls, 0)).center())
+    assert {panel._item_value(i) for i in tree.selectedItems()} == {'Walls', 'Furniture'}
+    assert panel._item_value(tree.currentItem()) == 'Walls'
 
 
 def test_assign_uses_active_layer_with_multiple_selected(panel):

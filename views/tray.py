@@ -20,12 +20,13 @@ from views import prompts as _prompts
 
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QPoint, QRect, QSettings, QSize, Qt
-from PySide6.QtGui import QColor, QIcon, QImage, QPixmap
+from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QRectF, QSettings, QSize, Qt
+from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDateEdit,
+    QDialog,
     QDockWidget,
     QDoubleSpinBox,
     QFileDialog,
@@ -42,6 +43,9 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QStyledItemDelegate,
+    QStyle,
+    QStyleOptionViewItem,
     QSizePolicy,
     QSlider,
     QSpinBox,
@@ -3280,6 +3284,332 @@ def _scrolled(sections) -> QScrollArea:
 
 
 
+class _LayerColorDelegate(QStyledItemDelegate):
+    """A small colour chip, retaining the row's normal selection background."""
+
+    def paint(self, painter, option, index):
+        super().paint(painter, option, index)
+        color = index.data(Qt.UserRole + 2)
+        if index.data(Qt.UserRole + 4) or not isinstance(color, QColor):
+            return
+        center = option.rect.center()
+        chip = QRect(center.x() - 7, center.y() - 7, 14, 14)
+        painter.save()
+        painter.setPen(QColor(0, 0, 0, 100))
+        painter.setBrush(color)
+        painter.drawRoundedRect(chip, 2, 2)
+        painter.restore()
+
+    def createEditor(self, parent, option, index):
+        return None  # Double-click opens the colour dialog.
+
+
+class _LayerStateDelegate(QStyledItemDelegate):
+    """Compact eye/lock controls backed by the existing checkbox model."""
+
+    def __init__(self, locked=False, parent=None):
+        super().__init__(parent)
+        self._locked = locked
+        self._eye_renderers = {}
+
+    def _eye_renderer(self, checked, color):
+        from PySide6.QtSvg import QSvgRenderer
+        key = (checked, color)
+        if key not in self._eye_renderers:
+            # Original SketchUp SVGs supplied from Skalp Studio resources.
+            name = "layer_visible.svg" if checked else "layer_hidden.svg"
+            svg = (Path(__file__).resolve().parent.parent / "resources/icons" / name).read_bytes()
+            if color:
+                svg = svg.replace(b"#0E416C", color.encode("ascii"))
+            self._eye_renderers[key] = QSvgRenderer(svg, self)
+        return self._eye_renderers[key]
+
+    def paint(self, painter, option, index):
+        background = QStyleOptionViewItem(option)
+        self.initStyleOption(background, index)
+        background.features &= ~QStyleOptionViewItem.HasCheckIndicator
+        background.text = ""
+        style = option.widget.style() if option.widget else None
+        if style:
+            style.drawControl(QStyle.CE_ItemViewItem, background, painter, option.widget)
+        if self._locked and index.data(Qt.UserRole + 4):
+            return
+        checked = Qt.CheckState(index.data(Qt.CheckStateRole)) == Qt.Checked
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing)
+        if not self._locked:
+            color = (option.palette.highlightedText().color().name()
+                     if option.state & QStyle.State_Selected else
+                     "#D2D2D2" if option.palette.base().color().lightnessF() < .5 else "#3D3D3D")
+            if not checked:
+                painter.setOpacity(.55)
+            rect = QRectF(option.rect.center().x() - 10, option.rect.center().y() - 10, 20, 20)
+            self._eye_renderer(checked, color).render(painter, rect)
+            painter.restore()
+            return
+        painter.translate(option.rect.center().x() - 7, option.rect.center().y() - 7)
+        painter.scale(14. / 18., 14. / 18.)
+        color = (option.palette.highlightedText().color() if option.state & QStyle.State_Selected
+                 else QColor("#111111") if option.palette.base().color().lightnessF() >= .5
+                 else option.palette.text().color())
+        if checked:
+            color = QColor("#D32F2F")
+        pen = QPen(color, 1.25)
+        pen.setCapStyle(Qt.RoundCap)
+        pen.setJoinStyle(Qt.RoundJoin)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        if self._locked:
+            painter.setBrush(color)
+            painter.drawRoundedRect(QRect(3, 8, 12, 9), 2, 2)
+            painter.setBrush(Qt.NoBrush)
+            path = QPainterPath()
+            if checked:
+                path.moveTo(5, 8)
+                path.lineTo(5, 4.5)
+                path.cubicTo(5, -.5, 13, -.5, 13, 4.5)
+                path.lineTo(13, 8)
+            else:
+                # Upright shackle, open on the right, matching the reference.
+                path.moveTo(5, 8)
+                path.lineTo(5, 4.5)
+                path.cubicTo(5, -.5, 13, -.5, 13, 4.5)
+            painter.drawPath(path)
+        painter.restore()
+
+    def editorEvent(self, event, model, option, index):
+        if self._locked and index.data(Qt.UserRole + 4):
+            return True
+        if event.type() == QEvent.MouseButtonRelease and event.button() == Qt.LeftButton:
+            if option.rect.contains(event.position().toPoint()):
+                state = Qt.Unchecked if Qt.CheckState(index.data(Qt.CheckStateRole)) == Qt.Checked else Qt.Checked
+                return model.setData(index, state, Qt.CheckStateRole)
+        if event.type() in (QEvent.MouseButtonPress, QEvent.MouseButtonDblClick):
+            return True
+        return super().editorEvent(event, model, option, index)
+
+    def createEditor(self, parent, option, index):
+        return None
+
+
+class _LayerLineDelegate(QStyledItemDelegate):
+    """One visual sample for the effective inherited line color and pattern."""
+
+    def paint(self, painter, option, index):
+        super().paint(painter, option, index)
+        if index.data(Qt.UserRole + 4):
+            return
+        color = index.data(Qt.UserRole + 2)
+        pattern = index.data(Qt.UserRole + 3) or "solid"
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing)
+        # The tray preview adapts neutral dark lines to a dark theme;
+        # the stored color and the viewport rendering stay unchanged.
+        preview_color = QColor(color)
+        if (option.palette.base().color().lightnessF() < .5
+                and color.lightnessF() < .3 and color.hsvSaturationF() < .5):
+            preview_color = QColor(235, 237, 240)
+        pen = QPen(preview_color, 1.5)
+        pen.setCapStyle(Qt.RoundCap)
+        if pattern == "dashed":
+            pen.setDashPattern([4., 2.5])
+        elif pattern == "dotted":
+            pen.setDashPattern([.5, 2.5])
+        y = option.rect.center().y()
+        start, end = option.rect.left() + 5, option.rect.right() - 5
+        painter.setPen(pen)
+        painter.drawLine(start, y, end, y)
+        painter.restore()
+
+    def createEditor(self, parent, option, index):
+        return None
+
+
+class LayerLineDialog(QDialog):
+    """Edit optional line overrides on a layer or a layer folder."""
+
+    def __init__(self, item, parent=None, scene=None):
+        super().__init__(parent)
+        self._scene = scene
+        self._item = item
+        from PySide6.QtWidgets import QDialogButtonBox, QFormLayout
+        from core.layers import LINE_STYLES
+        self.setWindowTitle(tr("Line appearance") + " — " + item.name)
+        self._edge_color = item.edge_color
+        form = QFormLayout(self)
+        row = QHBoxLayout()
+        self._color_button = QPushButton()
+        self._color_button.clicked.connect(self._pick_color)
+        row.addWidget(self._color_button)
+        clear = QPushButton(tr("Clear"))
+        clear.clicked.connect(lambda: self._set_color(None))
+        row.addWidget(clear)
+        form.addRow(tr("Line color:"), row)
+        self._line_style = QComboBox()
+        self._line_style.setIconSize(QSize(96, 18))
+        self._line_style.setMinimumWidth(220)
+        self._line_style.addItem(tr("Inherited"), None)
+        for value, label in zip(LINE_STYLES, ("Solid", "Dashed", "Dotted")):
+            self._line_style.addItem(tr(label), value)
+        self._line_style.setCurrentIndex(max(0, self._line_style.findData(item.line_style)))
+        form.addRow(tr("Line style:"), self._line_style)
+        hint = QLabel(tr("Choose a line color and style. Clear removes the custom line color."))
+        hint.setWordWrap(True)
+        form.addRow(hint)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        form.addRow(buttons)
+        self._set_color(self._edge_color)
+
+    def _effective_line_color(self):
+        if self._edge_color is not None:
+            return self._edge_color
+        if self._scene is None:
+            return (0.13, 0.17, 0.23)
+        from core.layers import LayerFolder
+        identity = self._item if isinstance(self._item, LayerFolder) else self._item.name
+        ancestors = iter(self._scene.layer_ancestors(identity))
+        next(ancestors, None)  # Clear must preview inheritance without mutating the item.
+        for ancestor in ancestors:
+            if ancestor.edge_color is not None:
+                return ancestor.edge_color
+        return ((0., 0., 0.) if self._scene.display_style.color_by_layer
+                else self._scene.display_style.edge_color)
+
+    @staticmethod
+    def _color_icon(color):
+        pixmap = QPixmap(18, 18)
+        pixmap.fill(QColor.fromRgbF(*color))
+        return QIcon(pixmap)
+
+    def _set_color(self, color):
+        self._edge_color = color
+        effective = self._effective_line_color()
+        self._color_button.setText(tr("Inherited") if color is None else QColor.fromRgbF(*color).name())
+        self._color_button.setIcon(self._color_icon(effective))
+        self._color_button.setIconSize(QSize(18, 18))
+        self._color_button.setToolTip(QColor.fromRgbF(*effective).name())
+        self._color_button.setMinimumHeight(24)
+        self._update_line_style_icons()
+
+    def _inherited_line_style(self):
+        if self._scene is not None:
+            from core.layers import LayerFolder
+            identity = self._item if isinstance(self._item, LayerFolder) else self._item.name
+            ancestors = iter(self._scene.layer_ancestors(identity))
+            next(ancestors, None)
+            for ancestor in ancestors:
+                if ancestor.line_style is not None:
+                    return ancestor.line_style
+        return "solid"
+
+    def _update_line_style_icons(self):
+        color = QColor.fromRgbF(*self._effective_line_color())
+        if (self.palette().base().color().lightnessF() < .5
+                and color.lightnessF() < .3 and color.hsvSaturationF() < .5):
+            color = QColor(235, 237, 240)
+        for index in range(self._line_style.count()):
+            pattern = self._line_style.itemData(index) or self._inherited_line_style()
+            pixmap = QPixmap(192, 36)
+            pixmap.setDevicePixelRatio(2.)
+            pixmap.fill(Qt.transparent)
+            painter = QPainter(pixmap)
+            painter.setRenderHint(QPainter.Antialiasing)
+            pen = QPen(color, 1.75)
+            pen.setCapStyle(Qt.RoundCap)
+            if pattern == "dashed":
+                pen.setDashPattern([4., 2.5])
+            elif pattern == "dotted":
+                pen.setDashPattern([.5, 2.5])
+            painter.setPen(pen)
+            painter.drawLine(4, 9, 92, 9)
+            painter.end()
+            self._line_style.setItemIcon(index, QIcon(pixmap))
+
+    def _pick_color(self):
+        chosen = get_color(QColor.fromRgbF(*self._effective_line_color()), self, tr("Line color"))
+        if chosen.isValid():
+            self._set_color((chosen.redF(), chosen.greenF(), chosen.blueF()))
+
+    def apply_to(self, item):
+        item.edge_color = self._edge_color
+        item.line_style = self._line_style.currentData()
+
+
+class LayerAppearanceDialog(LayerLineDialog):
+    """Material-preserving tint and transparency alongside the line overrides."""
+
+    def __init__(self, item, parent=None, scene=None):
+        super().__init__(item, parent, scene)
+        self.setWindowTitle(tr("Edit appearance") + " — " + item.name)
+        self._tint_color = item.tint_color
+        self._tint_button = QPushButton()
+        self._tint_button.clicked.connect(self._pick_tint)
+        row = QHBoxLayout()
+        row.addWidget(self._tint_button)
+        clear = QPushButton(tr("Clear"))
+        clear.clicked.connect(lambda: self._set_tint(None))
+        row.addWidget(clear)
+        self.layout().insertRow(0, tr("Tint color:"), row)
+        self._transparency = QSpinBox()
+        self._transparency.setRange(0, 100)
+        self._transparency.setSuffix("%")
+        self._transparency.setValue(item.transparency)
+        self._transparency.setToolTip(tr("Transparency combines with the parent folder."))
+        self.layout().insertRow(1, tr("Transparency:"), self._transparency)
+        self._set_tint(self._tint_color)
+
+    def _set_tint(self, color):
+        self._tint_color = color
+        self._tint_button.setText(tr("Inherited") if color is None else "")
+        css = ""
+        if color is not None:
+            rgb = tuple(round(c * 255) for c in color)
+            css = f"background-color: rgb({rgb[0]}, {rgb[1]}, {rgb[2]});"
+        self._tint_button.setStyleSheet(css)
+        self._tint_button.setMinimumHeight(24)
+
+    def _pick_tint(self):
+        chosen = get_color(QColor.fromRgbF(*(self._tint_color or (.78, .78, .78))),
+                           self, tr("Tint color"))
+        if chosen.isValid():
+            self._set_tint((chosen.redF(), chosen.greenF(), chosen.blueF()))
+
+    def apply_to(self, item):
+        super().apply_to(item)
+        item.tint_color = self._tint_color
+        item.transparency = self._transparency.value()
+
+
+class _VerticalResizeHandle(QFrame):
+    """Resize a tray tree while its panel owns the saved height preference."""
+
+    def __init__(self, view, on_resize):
+        super().__init__()
+        self._view, self._on_resize = view, on_resize
+        self._press_y = None
+        self.setFixedHeight(12)
+        self.setFrameShape(QFrame.HLine)
+        self.setCursor(Qt.SplitVCursor)
+        self.setToolTip(tr("Drag to resize"))
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._press_y = event.globalPosition().y()
+            self._start_height = self._view.height()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self._press_y is not None:
+            self._on_resize(round(self._start_height + event.globalPosition().y() - self._press_y))
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        self._press_y = None
+        event.accept()
+
+
 class LayersPanel(QWidget):
     """Layers / tags (Fase 6): one row per layer with visibility and lock
     checkboxes; buttons to add / remove layers and to move the current
@@ -3293,9 +3623,18 @@ class LayersPanel(QWidget):
                                        QPushButton, QVBoxLayout)
         self._window = window
         self._updating = False
+        self._sort_column = -1
+        self._sort_order = Qt.AscendingOrder
+        self._manual_order = False
+        self._user_height = QSettings().value("layers/panel_height", 0, type=int)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(8, 6, 8, 8)
         from views.scene_tree import LayerTree
+        self.filter_input = QLineEdit()
+        self.filter_input.setPlaceholderText(tr("Filter layers"))
+        self.filter_input.setClearButtonEnabled(True)
+        self.filter_input.textChanged.connect(self._filter_layers)
+        lay.addWidget(self.filter_input)
         self.tree = LayerTree()
         self.tree.setHeaderHidden(False)
         self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
@@ -3304,20 +3643,56 @@ class LayersPanel(QWidget):
         self.tree.itemCollapsed.connect(self._on_expansion)
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._on_context_menu)
-        self.tree.setColumnCount(3)
-        self.tree.setHeaderLabels([tr("Name"), tr("Visible"), tr("Lock")])
+        self.tree.setColumnCount(8)
+        self.tree.setHeaderLabels([tr("Name"), "", "", "",
+                                  tr("Line"), "", "", "%"])
         self.tree.setRootIsDecorated(True)
         self.tree.header().setStretchLastSection(False)
         self.tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
-        for column in (1, 2):
+        self.tree.header().setMinimumSectionSize(24)
+        for column, width in ((1, 24), (2, 24), (3, 24), (4, 48), (5, 0), (6, 24), (7, 38)):
             self.tree.header().setSectionResizeMode(column, QHeaderView.Fixed)
-            self.tree.setColumnWidth(column, 52)
+            self.tree.setColumnWidth(column, width)
+        self.tree.header().moveSection(self.tree.header().visualIndex(1), 0)
+        self.tree.setTreePosition(0)  # Keep indentation and folder arrows with the name.
+        self.tree.setColumnHidden(5, True)  # Legacy style data; displayed together in column 4.
+        for column, label in ((1, "Visible"), (2, "Lock"), (3, "Color"), (4, "Line appearance"), (6, "Tint"), (7, "Transparency")):
+            self.tree.headerItem().setToolTip(column, tr(label))
+        self.tree.setItemDelegateForColumn(1, _LayerStateDelegate(parent=self.tree))
+        self.tree.setItemDelegateForColumn(2, _LayerStateDelegate(locked=True, parent=self.tree))
+        self.tree.setItemDelegateForColumn(3, _LayerColorDelegate(self.tree))
+        self.tree.setItemDelegateForColumn(4, _LayerLineDelegate(self.tree))
+        self.tree.setItemDelegateForColumn(6, _LayerColorDelegate(self.tree))
+        self._columns_menu = QMenu(self)
+        for column, key, label in ((3, "color", "Color"), (4, "line", "Line"),
+                                   (6, "tint", "Tint"),
+                                   (7, "transparency", "Transp.")):
+            action = self._columns_menu.addAction(tr(label))
+            action.setCheckable(True)
+            action.setChecked(QSettings().value(f"layers/columns/{key}", column < 6, type=bool))
+            self.tree.setColumnHidden(column, not action.isChecked())
+            action.toggled.connect(lambda visible, c=column, k=key: self._set_column_visible(c, k, visible))
+        self._columns_menu.addSeparator()
+        self._columns_menu.addAction(tr("Clear sort"), self._clear_sort)
+        header = self.tree.header()
+        header.setSectionsClickable(True)
+        header.sectionClicked.connect(self._on_header_clicked)
+        header.setContextMenuPolicy(Qt.CustomContextMenu)
+        header.customContextMenuRequested.connect(
+            lambda point: self._columns_menu.exec(header.mapToGlobal(point)))
         self.tree.itemChanged.connect(self._on_item_changed)
+        self.tree.itemDoubleClicked.connect(self._on_color_clicked)
         lay.addWidget(self.tree)
+        self._resize_handle = _VerticalResizeHandle(self.tree, self._set_height)
+        lay.addWidget(self._resize_handle)
+        self._color_by_layer = QCheckBox(tr("Color by layer"))
+        self._color_by_layer.toggled.connect(self._on_color_by_layer)
+        lay.addWidget(self._color_by_layer)
         row = QHBoxLayout()
         add_btn = QPushButton(tr("+ Layer"))
         add_btn.clicked.connect(self._on_add)
         del_btn = QPushButton(tr("−"))
+        self.delete_button = del_btn
         del_btn.setToolTip(tr("Delete layer (its entities go to the default)"))
         del_btn.clicked.connect(self._on_delete)
         purge_btn = QPushButton(tr("Purge"))
@@ -3325,6 +3700,7 @@ class LayersPanel(QWidget):
                                 "(a layer a scene hides is kept)"))
         purge_btn.clicked.connect(self._on_purge)
         assign_btn = QPushButton(tr("Assign selection"))
+        self.assign_button = assign_btn
         assign_btn.setToolTip(tr("Move the selected entities onto the layer "
                                  "highlighted in the list (also: Entity "
                                  "info ▸ Layer, or right-click ▸ Layer)"))
@@ -3341,8 +3717,23 @@ class LayersPanel(QWidget):
         row.addWidget(del_btn)
         row.addWidget(purge_btn)
         row.addWidget(assign_btn)
+        line_btn = QPushButton(tr("Edit appearance…"))
+        self.edit_button = line_btn
+        line_btn.clicked.connect(self._on_edit_appearance)
+        row.addWidget(line_btn)
         lay.addLayout(row)
+        self.tree.itemSelectionChanged.connect(self._update_action_buttons)
+        self.tree.currentItemChanged.connect(self._update_action_buttons)
+        from PySide6.QtCore import QTimer
+        self._action_timer = QTimer(self)
+        self._action_timer.timeout.connect(self._update_action_buttons)
+        self._action_timer.start(250)
         self.refresh()
+
+    @staticmethod
+    def _item_value(item):
+        name = item.data(0, Qt.UserRole + 1)
+        return name[0] if name is not None else item.data(0, Qt.UserRole)
 
     # ---- Model → view --------------------------------------------------------
     def refresh(self) -> None:
@@ -3354,11 +3745,12 @@ class LayersPanel(QWidget):
         collator.setNumericMode(True)
         collator.setIgnorePunctuation(True)
         current = self.tree.currentItem()
-        current_value = current.data(0, Qt.UserRole) if current else None
-        selected = [item.data(0, Qt.UserRole) for item in self.tree.selectedItems()]
+        current_value = self._item_value(current) if current else None
+        selected = [self._item_value(item) for item in self.tree.selectedItems()]
         self._updating = True
         self.tree.clear()
         scene = self._scene()
+        self._color_by_layer.setChecked(scene.display_style.color_by_layer)
         folders = {f.uid: f for f in scene.layer_folders}
         items = {}
         for folder in scene.layer_folders:
@@ -3377,7 +3769,12 @@ class LayersPanel(QWidget):
             items.get(parent_id, self.tree.invisibleRootItem()).addChild(items[folder.uid])
         for ly in scene.layers:
             item = QTreeWidgetItem([ly.name, "", ""])
+            item.setData(3, Qt.UserRole + 2, QColor.fromRgbF(*ly.color))
+            item.setToolTip(3, tr("Double-click to change layer color"))
             item.setData(0, Qt.UserRole, ly.name)
+            # QString strips a leading U+FEFF (present in imported SKP tags).
+            # A Python tuple keeps the exact model key through Qt's item data.
+            item.setData(0, Qt.UserRole + 1, (ly.name,))
             item.setFlags((item.flags() | Qt.ItemIsUserCheckable) & ~Qt.ItemIsDropEnabled)
             if ly.name != DEFAULT_LAYER:
                 item.setFlags(item.flags() | Qt.ItemIsEditable)
@@ -3389,48 +3786,160 @@ class LayersPanel(QWidget):
         def order(parent):
             children = [parent.takeChild(0) for _ in range(parent.childCount())]
             def obj(item):
-                value = item.data(0, Qt.UserRole)
+                value = self._item_value(item)
                 return value if isinstance(value, LayerFolder) else scene.layer(value)
             def sort_key(item):
                 value = obj(item)
-                category = (0 if item.data(0, Qt.UserRole) == DEFAULT_LAYER
+                category = (0 if self._item_value(item) == DEFAULT_LAYER
                             else 1 if isinstance(value, LayerFolder) else 2)
                 return category, collator.sortKey(value.name)
-            children.sort(key=sort_key)
+            groups = {}
+            for item in children:
+                groups.setdefault(sort_key(item)[0], []).append(item)
+            children = []
+            for category in sorted(groups):
+                def key(item):
+                    value = obj(item)
+                    identity = value if isinstance(value, LayerFolder) else value.name
+                    if self._manual_order:
+                        return value.position
+                    if self._sort_column in (1, 2):
+                        return value.visible if self._sort_column == 1 else value.locked
+                    if self._sort_column == 3:
+                        return getattr(value, "color", (-1., -1., -1.))
+                    if self._sort_column in (4, 6):
+                        attr = "edge_color" if self._sort_column == 4 else "tint_color"
+                        return scene.layer_setting(identity, attr, (-1., -1., -1.))
+                    if self._sort_column == 5:
+                        return scene.layer_setting(identity, "line_style", "solid")
+                    if self._sort_column == 7:
+                        return 1. - scene.layer_opacity(identity)
+                    return collator.sortKey(value.name)
+                children.extend(sorted(groups[category], key=key,
+                                       reverse=not self._manual_order and self._sort_order == Qt.DescendingOrder))
             parent.addChildren(children)
             for item in children:
                 value = obj(item)
+                key = value if isinstance(value, LayerFolder) else value.name
+                item.setToolTip(0, value.name)
+                fallback = ((0., 0., 0.) if scene.display_style.color_by_layer else scene.display_style.edge_color)
+                line_color = scene.layer_setting(key, "edge_color", fallback)
+                item.setData(4, Qt.UserRole + 2, QColor.fromRgbF(*line_color))
+                pattern = scene.layer_setting(key, "line_style")
+                item.setData(4, Qt.UserRole + 3, pattern or "solid")
+                labels = {"solid": "Solid", "dashed": "Dashed", "dotted": "Dotted"}
+                item.setText(5, tr(labels.get(pattern, "Inherited")))
+                for column in (4, 5):
+                    item.setToolTip(column, tr("Double-click to change line appearance"))
+                tint = scene.layer_setting(key, "tint_color")
+                if tint is not None:
+                    item.setData(6, Qt.UserRole + 2, QColor.fromRgbF(*tint))
+                item.setText(7, f"{value.transparency}%")
+                item.setToolTip(6, tr("Double-click to edit appearance"))
+                effective = round((1. - scene.layer_opacity(key)) * 100)
+                item.setToolTip(7, tr("Effective transparency: {n}%", n=effective))
+                item.setToolTip(1, tr("Click to show or hide"))
+                item.setToolTip(2, tr("Click to lock or unlock"))
                 item.setCheckState(1, Qt.Checked if value.visible else Qt.Unchecked)
                 item.setCheckState(2, Qt.Checked if value.locked else Qt.Unchecked)
                 if isinstance(value, LayerFolder):
+                    for column in (2, 3, 4, 5, 6, 7):
+                        item.setData(column, Qt.UserRole + 4, True)
+                        item.setText(column, "")
+                        item.setToolTip(column, "")
                     order(item)
                     item.setExpanded(value.expanded)
-                if item.data(0, Qt.UserRole) == current_value:
+                if self._item_value(item) == current_value:
                     from PySide6.QtCore import QItemSelectionModel
                     self.tree.setCurrentItem(item, 0, QItemSelectionModel.NoUpdate)
-                if item.data(0, Qt.UserRole) in selected:
+                if self._item_value(item) in selected:
                     item.setSelected(True)
         order(self.tree.invisibleRootItem())
-        self._fit_tree()
+        self._filter_layers(self.filter_input.text())
         self._updating = False
+        self._update_action_buttons()
+
+    def _update_action_buttons(self, *_):
+        from core.layers import DEFAULT_LAYER, LayerFolder
+        item = self.tree.currentItem()
+        value = self._item_value(item) if item else None
+        has_layer = value is not None and not isinstance(value, LayerFolder) and self._scene().layer(value) is not None
+        self.edit_button.setEnabled(value is not None)
+        self.delete_button.setEnabled(any(self._item_value(row) != DEFAULT_LAYER
+                                          for row in self.tree.selectedItems()))
+        self.assign_button.setEnabled(has_layer and any(
+            isinstance(entity, (Face, Edge, Group, Dimension, TextLabel))
+            for entity in self._scene().selection))
 
     def _fit_tree(self):
         def count(parent):
             return sum(1 + (count(parent.child(i)) if parent.child(i).isExpanded()
-                            else 0) for i in range(parent.childCount()))
+                            else 0) for i in range(parent.childCount())
+                       if not parent.child(i).isHidden())
         rows = count(self.tree.invisibleRootItem())
         height = max(self.tree.sizeHintForRow(0), self.tree.fontMetrics().height() + 8)
-        self.tree.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded if rows > 12
+        self.tree.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded if self._user_height or rows > 5
                                              else Qt.ScrollBarAlwaysOff)
-        self.tree.setFixedHeight(self.tree.header().height() + max(3, min(rows, 12)) * height
-                                 + 2 * self.tree.frameWidth() + 2)
+        self.tree.setFixedHeight(self._user_height or (self.tree.header().height()
+                                 + max(3, min(rows, 5)) * height + 2 * self.tree.frameWidth() + 2))
+
+    def _set_height(self, height):
+        self._user_height = max(self.tree.header().height() + self.tree.fontMetrics().height() + 12, height)
+        QSettings().setValue("layers/panel_height", self._user_height)
+        self._fit_tree()
+
+    def _set_column_visible(self, column, key, visible):
+        self.tree.setColumnHidden(column, not visible)
+        QSettings().setValue(f"layers/columns/{key}", visible)
+
+    def _on_header_clicked(self, column):
+        if self._sort_column != column:
+            self._sort_column, self._sort_order = column, Qt.AscendingOrder
+        elif self._sort_order == Qt.AscendingOrder:
+            self._sort_order = Qt.DescendingOrder
+        else:
+            self._clear_sort()
+            return
+        self._manual_order = False
+        self.tree.header().setSortIndicatorShown(True)
+        self.tree.header().setSortIndicator(column, self._sort_order)
+        self.refresh()
+
+    def _clear_sort(self):
+        self._sort_column, self._manual_order = -1, True
+        self.tree.header().setSortIndicatorShown(False)
+        self.refresh()
+
+    def _filter_layers(self, text):
+        from core.layers import LayerFolder
+        query = text.strip().casefold()
+        previous = self._updating
+        self._updating = True
+        def visit(item, ancestor_match=False):
+            value = self._item_value(item)
+            name = value.name if isinstance(value, LayerFolder) else value
+            matches = not query or ancestor_match or query in name.casefold()
+            children = [visit(item.child(i), matches and bool(query))
+                        for i in range(item.childCount())]
+            visible = matches or any(children)
+            item.setHidden(not visible)
+            if query and any(children):
+                item.setExpanded(True)
+            elif not query and isinstance(value, LayerFolder):
+                item.setExpanded(value.expanded)
+            return visible
+        for i in range(self.tree.topLevelItemCount()):
+            visit(self.tree.topLevelItem(i))
+        self._updating = previous
+        self.tree.setDragEnabled(not query and self._sort_column == -1)
+        self._fit_tree()
 
     def _selected_folder(self):
         from core.layers import LayerFolder
         item = self.tree.currentItem()
-        if item is not None and not isinstance(item.data(0, Qt.UserRole), LayerFolder):
+        if item is not None and not isinstance(self._item_value(item), LayerFolder):
             item = item.parent()
-        return item.data(0, Qt.UserRole) if item else None
+        return self._item_value(item) if item else None
 
     def _next_position(self, folder):
         parent_id = folder.uid if folder else None
@@ -3442,7 +3951,7 @@ class LayersPanel(QWidget):
     def _on_add_folder(self):
         from core.layers import LayerFolder
         parent_item, selected = self.tree.folder_selection()
-        parent = parent_item.data(0, Qt.UserRole) if parent_item else None
+        parent = self._item_value(parent_item) if parent_item else None
         names = {f.name for f in self._scene().layer_folders}
         base, n = tr("Folder"), 1
         while f"{base} {n}" in names:
@@ -3451,13 +3960,13 @@ class LayersPanel(QWidget):
                              position=self._next_position(parent))
         self._scene().layer_folders.append(folder)
         if selected:
-            folder.position = min((item.data(0, Qt.UserRole).position
-                                   if isinstance(item.data(0, Qt.UserRole), LayerFolder)
-                                   else self._scene().layer(item.data(0, Qt.UserRole)).position
+            folder.position = min((self._item_value(item).position
+                                   if isinstance(self._item_value(item), LayerFolder)
+                                   else self._scene().layer(self._item_value(item)).position
                                    for item in selected if item.parent() is parent_item),
                                   default=folder.position)
         for position, item in enumerate(selected):
-            value = item.data(0, Qt.UserRole)
+            value = self._item_value(item)
             if isinstance(value, LayerFolder):
                 value.parent_id = folder.uid
             else:
@@ -3470,7 +3979,7 @@ class LayersPanel(QWidget):
         def select(item):
             for i in range(item.childCount()):
                 child = item.child(i)
-                if child.data(0, Qt.UserRole) is folder:
+                if self._item_value(child) is folder:
                     self.tree.clearSelection()
                     self.tree.setCurrentItem(child)
                     self.tree.editItem(child, 0)
@@ -3483,18 +3992,19 @@ class LayersPanel(QWidget):
 
     def _on_expansion(self, item):
         if not self._updating:
-            item.data(0, Qt.UserRole).expanded = item.isExpanded()
+            self._item_value(item).expanded = item.isExpanded()
             self._fit_tree()
             self._touch()
 
     def _on_tree_moved(self):
         from core.layers import DEFAULT_LAYER, LayerFolder
+        self._manual_order, self._sort_column = True, -1
         scene = self._scene()
         layers, folders = [], []
         def visit(parent, parent_id=None):
             for index in range(parent.childCount()):
                 item = parent.child(index)
-                value = item.data(0, Qt.UserRole)
+                value = self._item_value(item)
                 if isinstance(value, LayerFolder):
                     value.parent_id = parent_id
                     value.position = index
@@ -3541,12 +4051,63 @@ class LayersPanel(QWidget):
             self.tree.setCurrentItem(item)
         menu = QMenu(self)
         menu.addAction(tr("New folder"), self._on_add_folder)
-        if item is not None and item.data(0, Qt.UserRole) != DEFAULT_LAYER:
+        if item is not None:
+            menu.addAction(tr("Edit appearance…"), self._on_edit_appearance)
+        if item is not None and self._item_value(item) != DEFAULT_LAYER:
             menu.addAction(tr("Rename"), lambda: self.tree.editItem(item, 0))
-        if any(row.data(0, Qt.UserRole) != DEFAULT_LAYER for row in self.tree.selectedItems()):
+        if any(self._item_value(row) != DEFAULT_LAYER for row in self.tree.selectedItems()):
             menu.addAction(tr("Move to root"), self._on_move_to_root)
             menu.addAction(tr("Delete"), self._on_delete)
         menu.exec(self.tree.viewport().mapToGlobal(point))
+
+    def _on_color_by_layer(self, enabled):
+        if self._updating:
+            return
+        self._scene().display_style.color_by_layer = enabled
+        self.refresh()
+        self._window.viewport.update()
+
+    def _on_color_clicked(self, item, column):
+        if item.data(column, Qt.UserRole + 4):
+            return
+        if column in (6, 7):
+            self._on_edit_appearance()
+            return
+        if column in (4, 5):
+            self._on_line_appearance()
+            return
+        if column != 3:
+            return
+        layer = self._scene().layer(self._item_value(item))
+        if layer is None:
+            return
+        chosen = get_color(QColor.fromRgbF(*layer.color),
+                           _dialog_parent(self), tr("Layer color"))
+        if chosen.isValid():
+            layer.color = (chosen.redF(), chosen.greenF(), chosen.blueF())
+            self.refresh()
+            self._touch()
+
+    def _on_line_appearance(self):
+        self._edit_appearance(LayerLineDialog)
+
+    def _on_edit_appearance(self):
+        self._edit_appearance(LayerAppearanceDialog)
+
+    def _edit_appearance(self, dialog_type):
+        from core.layers import LayerFolder
+        item = self.tree.currentItem()
+        if item is None:
+            return
+        value = self._item_value(item)
+        target = value if isinstance(value, LayerFolder) else self._scene().layer(value)
+        if target is None:
+            return
+        dialog = dialog_type(target, _dialog_parent(self), scene=self._scene())
+        if dialog.exec() == QDialog.Accepted:
+            dialog.apply_to(target)
+            self.refresh()
+            self._touch()
 
     # ---- View → model --------------------------------------------------------
     def _scene(self):
@@ -3562,7 +4123,7 @@ class LayersPanel(QWidget):
             self._updating = True
             try:
                 for selected in self.tree.selectedItems():
-                    value = selected.data(0, Qt.UserRole)
+                    value = self._item_value(selected)
                     target = value if isinstance(value, LayerFolder) else scene.layer(value)
                     if column == 1:
                         target.visible = checked
@@ -3574,7 +4135,7 @@ class LayersPanel(QWidget):
             self._prune_selection()
             self._touch()
             return
-        old_name = item.data(0, Qt.UserRole)
+        old_name = self._item_value(item)
         if isinstance(old_name, LayerFolder):
             if column == 0:
                 old_name.name = item.text(0).strip() or old_name.name
@@ -3596,6 +4157,7 @@ class LayersPanel(QWidget):
                 blocked = self.tree.blockSignals(True)
                 try:
                     item.setData(0, Qt.UserRole, new_name)
+                    item.setData(0, Qt.UserRole + 1, (new_name,))
                 finally:
                     self.tree.blockSignals(blocked)
             self.refresh()
@@ -3651,11 +4213,11 @@ class LayersPanel(QWidget):
         selected = self.tree.selectedItems()
         if not selected:
             return
-        names = {item.data(0, Qt.UserRole) for item in selected
-                 if not isinstance(item.data(0, Qt.UserRole), LayerFolder)
-                 and item.data(0, Qt.UserRole) != DEFAULT_LAYER}
+        names = {self._item_value(item) for item in selected
+                 if not isinstance(self._item_value(item), LayerFolder)
+                 and self._item_value(item) != DEFAULT_LAYER}
         folders = [item for item in selected
-                   if isinstance(item.data(0, Qt.UserRole), LayerFolder)]
+                   if isinstance(self._item_value(item), LayerFolder)]
         if not names and not folders:
             return
         # Every mesh in the document, nested placements included — walking
@@ -3676,7 +4238,7 @@ class LayersPanel(QWidget):
         # Keep unselected contents when removing a folder. Selected descendants
         # remain valid items after their parent has been removed.
         for item in selected:
-            if item.data(0, Qt.UserRole) == DEFAULT_LAYER:
+            if self._item_value(item) == DEFAULT_LAYER:
                 continue
             parent = item.parent() or self.tree.invisibleRootItem()
             index = parent.indexOfChild(item)
@@ -3724,11 +4286,10 @@ class LayersPanel(QWidget):
             self._window.statusBar().showMessage(
                 tr("Click a layer in the list first, then Assign."), 3000)
             return
-        name = item.data(0, Qt.UserRole)
+        name = self._item_value(item)
         from core.layers import LayerFolder
         if isinstance(name, LayerFolder):
-            self._window.statusBar().showMessage(
-                tr("Click a layer in the list first, then Assign."), 3000)
+            self._window.statusBar().showMessage(tr("Click a layer in the list first, then Assign."), 3000)
             return
         # Annotations are tagged too: a "Anotaciones" layer a
         # scene hides gives a clean plan without duplicating the model.
@@ -3762,6 +4323,7 @@ class ScenesPanel(QWidget):
         super().__init__()
         self._window = window
         self._updating = False
+        self._user_height = QSettings().value("scenes/panel_height", 0, type=int)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(8, 6, 8, 8)
         hint = QLabel(tr("Double-click a scene to show it"))
@@ -3777,6 +4339,8 @@ class ScenesPanel(QWidget):
         self.list.itemDoubleClicked.connect(self._on_activate)
         self.list.itemChanged.connect(self._on_item_changed)
         lay.addWidget(self.list)
+        self._resize_handle = _VerticalResizeHandle(self.list, self._set_height)
+        lay.addWidget(self._resize_handle)
         add_btn = QPushButton(tr("+ Scene"))
         add_btn.setToolTip(tr("Save the current view and layer visibility"))
         add_btn.clicked.connect(self._on_add)
@@ -3862,8 +4426,15 @@ class ScenesPanel(QWidget):
         rows = count(self.list.invisibleRootItem())
         height = self.list.sizeHintForRow(0) if rows else 0
         height = max(height, self.list.fontMetrics().height() + 4)
-        self.list.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.list.setFixedHeight(max(rows, 3) * height + 2 * self.list.frameWidth() + 2)
+        self.list.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded if self._user_height
+                                             else Qt.ScrollBarAlwaysOff)
+        self.list.setFixedHeight(self._user_height or (max(rows, 3) * height
+                                 + 2 * self.list.frameWidth() + 2))
+
+    def _set_height(self, height):
+        self._user_height = max(self.list.fontMetrics().height() + 12, height)
+        QSettings().setValue("scenes/panel_height", self._user_height)
+        self._fit_tree()
 
     def _on_expansion(self, item):
         if self._updating:

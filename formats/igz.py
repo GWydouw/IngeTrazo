@@ -341,8 +341,13 @@ def save_scene(scene, path: Path) -> dict:
         if protos:
             payload["protos"] = protos
     layers = getattr(scene, "layers", None)
+    from core.layers import default_layer_color
     if layers is not None and (len(layers) > 1 or any(
-            not ly.visible or ly.locked for ly in layers)):
+            not ly.visible or ly.locked or ly.edge_color is not None
+            or ly.line_style is not None
+            or ly.tint_color is not None or ly.transparency
+            or ly.color != default_layer_color(ly.name)
+            for ly in layers)):
         payload["layers"] = [ly.to_dict() for ly in layers]
     layer_folders = getattr(scene, "layer_folders", None)
     if layer_folders:
