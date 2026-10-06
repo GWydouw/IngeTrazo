@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QWidget
 from core.group import Group
 from core.layer_display import layer_face_buffers
 from core.layers import Layer, LayerFolder
+from core.mesh import Mesh
 from core.scene import Scene
 from formats import igz
 
@@ -214,6 +215,11 @@ def test_native_opacity_and_tint_preserve_original_face_material(mode, by_layer)
         layer.transparency = 50; vp.scene.version += 1
         combined = pixel()
         assert combined == pytest.approx(tuple(c * .25 + 255 * .75 for c in original), abs=3)
+        # Style overrides can switch without a scene-version change.
+        style.color_by_layer = not by_layer
+        assert pixel() != combined
+        style.color_by_layer = by_layer
+        assert pixel() == combined
         layer.transparency = 0
         folder.transparency = 0
         folder.tint_color = (0., 1., 0.); vp.scene.version += 1
@@ -275,3 +281,51 @@ def test_transparent_swatch_composites_over_checkerboard():
     paint_color_swatch(painter, QRect(0, 0, 32, 16), QColor(255, 0, 0))
     painter.end()
     assert image.pixelColor(2, 2) == image.pixelColor(6, 2) == QColor(255, 0, 0)
+
+
+def test_repeated_layer_geometry_is_triangulated_once_with_independent_opacity():
+    from core.layer_display import layer_line_buffers
+    scene = Scene()
+    scene.layers += [Layer('Red', color=(1., 0., 0.), transparency=50),
+                     Layer('Blue', color=(0., 0., 1.), transparency=75)]
+    mesh = Mesh(); face = triangle(mesh)
+    for name, offset in [('Red', 0), ('Blue', 4)]:
+        group = Group(mesh); group.layer = name; group.xform = QMatrix4x4()
+        group.xform.translate(offset, 0, 0); scene.groups.append(group)
+    calls = []
+    def triangulate(face):
+        calls.append(face)
+        return face.triangulate()
+    data, runs = layer_face_buffers(scene, triangulate)
+    assert calls == [face]
+    assert [run[1] for run in runs] == [.5, .25]
+    vertices = array('f'); vertices.frombytes(data)
+    assert min(vertices[runs[0][3] * 3::3]) == 0
+    assert min(vertices[runs[1][3] * 3::3]) == 4
+    lines, spans = layer_line_buffers(scene, (0., 0., 0.))
+    assert sum(span[-1] for span in spans) == 2 * len(mesh.edges) * 2
+    # A later geometry edit must not reuse the previous call's local data.
+    mesh.add_face([V(2, 0, 0), V(3, 0, 0), V(2, 0, 1)])
+    calls.clear(); layer_face_buffers(scene, triangulate)
+    assert len(calls) == 2
+
+
+def test_color_by_layer_keeps_transparent_instances_shared_and_rekeys_modes():
+    from views.viewport import Viewport
+    vp = Viewport()
+    try:
+        vp._chunk_cache_load = vp._chunk_cache_store = None
+        scene = vp.scene
+        scene.layers.append(Layer('Glass', transparency=50))
+        group = Group(); group.layer = 'Glass'; group.xform = QMatrix4x4()
+        triangle(group.mesh); scene.groups.append(group)
+        assert not vp._instanced_eligible(group)
+        before = vp._placements_epoch()
+        scene.display_style.color_by_layer = True
+        assert vp._instanced_eligible(group)
+        assert vp._placements_epoch() != before
+        scene.display_style.color_by_layer = False
+        assert not vp._instanced_eligible(group)
+        assert vp._placements_epoch() == before
+    finally:
+        vp.close()
