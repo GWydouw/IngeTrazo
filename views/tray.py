@@ -3365,8 +3365,6 @@ class LayersPanel(QWidget):
             item = QTreeWidgetItem([folder.name, "", ""])
             item.setData(0, Qt.UserRole, folder)
             item.setFlags(item.flags() | Qt.ItemIsEditable | Qt.ItemIsUserCheckable)
-            item.setIcon(0, QIcon(str(Path(__file__).resolve().parent.parent /
-                                      "resources/icons/folder.svg")))
             items[folder.uid] = item
         for folder in scene.layer_folders:
             cursor = parent_id = folder.parent_id
@@ -3820,8 +3818,6 @@ class ScenesPanel(QWidget):
             item = QTreeWidgetItem([folder.name])
             item.setData(0, Qt.UserRole, folder)
             item.setFlags(item.flags() | Qt.ItemIsEditable)
-            item.setIcon(0, QIcon(str(Path(__file__).resolve().parent.parent /
-                                      "resources/icons/folder.svg")))
             items[folder.uid] = item
         # Invalid/cyclic parents from external files fall back to the root.
         for folder in scene.scene_folders:

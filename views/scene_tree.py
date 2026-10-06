@@ -1,6 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Scene tree with native internal moves and folder-only drop targets."""
-from PySide6.QtCore import QEvent, QItemSelectionModel, Signal, Qt
+from pathlib import Path
+
+from PySide6.QtCore import QEvent, QItemSelectionModel, QRect, Signal, Qt
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QAbstractItemView, QTreeWidget
 
 
@@ -17,6 +20,23 @@ class SceneTree(QTreeWidget):
         self.setDropIndicatorShown(True)
         self.setAutoExpandDelay(600)
         self.setUniformRowHeights(True)
+        self.setIndentation(18)
+        icons = Path(__file__).resolve().parent.parent / "resources/icons"
+        self._folder_icons = {
+            False: QIcon(str(icons / "folder_collapsed.svg")),
+            True: QIcon(str(icons / "folder_expanded.svg")),
+        }
+
+    def drawBranches(self, painter, rect, index):
+        # The folder icon occupies the native expansion hit area in both trees.
+        from core.layers import LayerFolder
+        from core.saved_views import SceneFolder
+        item = self.itemFromIndex(index)
+        if item is not None and isinstance(item.data(0, Qt.UserRole),
+                                           (LayerFolder, SceneFolder)):
+            icon_rect = QRect(rect.right() - self.indentation() + 2,
+                              rect.center().y() - 8, 16, 16)
+            self._folder_icons[item.isExpanded()].paint(painter, icon_rect)
 
     def dropEvent(self, event):
         # Qt rejects self/descendant moves and items without ItemIsDropEnabled.

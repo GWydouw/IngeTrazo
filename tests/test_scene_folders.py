@@ -99,7 +99,8 @@ def test_only_folders_accept_children_and_bad_parents_fall_back_to_root(panel):
     tree = panel.list
     assert tree.topLevelItem(0).flags() & Qt.ItemIsDropEnabled
     assert not tree.topLevelItem(1).flags() & Qt.ItemIsDropEnabled
-    assert not tree.topLevelItem(0).icon(0).isNull()
+    # Folder graphics are drawn in the expansion area, without a second icon.
+    assert tree.topLevelItem(0).icon(0).isNull()
     root.parent_id = child.uid
     panel.refresh()
     assert tree.topLevelItemCount() == 3
@@ -110,6 +111,29 @@ def test_legacy_scene_list_preserves_order(panel):
     panel._scene().saved_views = [SavedView.from_dict({"name": n}) for n in ("B", "A", "C")]
     panel.refresh()
     assert [panel.list.topLevelItem(i).text(0) for i in range(3)] == ["B", "A", "C"]
+
+
+def test_folder_icon_click_toggles_expansion_and_preserves_state(panel):
+    from PySide6.QtCore import QPoint
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QApplication
+
+    scene, root, child = populate(panel)
+    panel.show()
+    QApplication.processEvents()
+    tree = panel.list
+    item = tree.topLevelItem(0)
+    rect = tree.visualRect(tree.indexFromItem(item, 0))
+    icon_center = QPoint(rect.left() - tree.indentation() // 2, rect.center().y())
+    QTest.mouseClick(tree.viewport(), Qt.LeftButton, Qt.NoModifier, icon_center)
+    assert not item.isExpanded()
+    assert not root.expanded
+    panel.refresh()
+    item = tree.topLevelItem(0)
+    assert not item.isExpanded()
+    QTest.mouseClick(tree.viewport(), Qt.LeftButton, Qt.NoModifier, icon_center)
+    assert item.isExpanded()
+    assert root.expanded
 
 
 def test_new_subfolder_rename_and_update_keep_selection(panel):
