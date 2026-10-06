@@ -610,8 +610,10 @@ class AsistentePanel(QWidget):
             self._finish()
             return
         text = ai.strip_thoughts(msg["text"])
-        self._convo.append({"role": "assistant", "text": text})
-        self._append(f"IA: {text}", "ai")
+        # Thinking-only replies must not create empty Anthropic turns.
+        if text.strip():
+            self._convo.append({"role": "assistant", "text": text})
+            self._append(f"IA: {text}", "ai")
         code = ai.extract_code(text)
         if code is None and ai.truncated_code(text):
             # Cut by max_tokens mid-recipe: half a block must neither run

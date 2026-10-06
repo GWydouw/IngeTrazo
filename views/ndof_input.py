@@ -2,8 +2,8 @@
 # Copyright (C) 2026 Marco Sumari Tellez and IngeTrazo contributors.
 """3D mouse input — the drivers that feed :mod:`core.ndof` (issue #108).
 
-No SDK, no new dependency: each platform already has a plain way to read
-the device.
+No proprietary SDK is bundled. macOS can optionally use HIDAPI when the
+installed 3DxWare framework is unavailable.
 
 * **Linux — spacenavd.** The free driver every distribution packages
   (``spacenavd``). It serves the device on a Unix socket in a fixed binary
@@ -18,7 +18,8 @@ the device.
   what FreeCAD does.
 * **macOS — 3DxWare.** The installed 3DconnexionClient framework forwards
   motion and buttons through ctypes callbacks; queued Qt signals deliver
-  them to the GUI thread. See ``ndof_macos.py``.
+  them to the GUI thread. See ``ndof_macos.py``. ``ndof_hid.py`` provides
+  a nonexclusive HIDAPI fallback for machines without the framework.
 
 :class:`NdofInput` picks the backend for the platform and emits
 ``motion(sample, dt)`` in the user's frame (see :mod:`core.ndof`).
@@ -30,7 +31,7 @@ import struct
 import sys
 import time
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, Signal, QTimer
 
 from core.ndof import NdofSample, from_hid, from_spacenavd
 
@@ -45,11 +46,15 @@ class NdofInput(QObject):
 
     motion = Signal(object, float)
     button = Signal(int, bool)
+    status_changed = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._backend = None
         self._last_t: float | None = None
+        self._retry = QTimer(self)
+        self._retry.setInterval(2000)
+        self._retry.timeout.connect(self.start)
 
     @property
     def backend_name(self) -> str | None:
@@ -60,20 +65,29 @@ class NdofInput(QObject):
         normal case on a machine without a 3D mouse, and silent."""
         if self._backend is not None:
             return True
+        self._retry.start()
         for cls in _backends_for(sys.platform):
             b = None
             try:
                 b = cls(self)
                 if b.open():
                     self._backend = b
+                    self._retry.stop()
+                    self.status_changed.emit()
                     return True
             except Exception:  # noqa: BLE001 — a driver quirk never stops the app
                 pass
-            if isinstance(b, QObject):
-                b.deleteLater()
+            if b is not None:
+                try:
+                    b.close()
+                except Exception:
+                    pass
+                if isinstance(b, QObject):
+                    b.deleteLater()
         return False
 
     def stop(self) -> None:
+        self._retry.stop()
         if self._backend is not None:
             try:
                 self._backend.close()
@@ -82,6 +96,12 @@ class NdofInput(QObject):
                     self._backend.deleteLater()
                 self._backend = None
         self._last_t = None
+        self.status_changed.emit()
+
+    def disconnected(self) -> None:
+        """Retry a lost connection without restarting the application."""
+        self.stop()
+        self._retry.start()
 
     # ---- called by the backends ------------------------------------------
     def _emit_motion(self, sample: NdofSample, dt: float | None = None) -> None:
@@ -104,7 +124,8 @@ def _backends_for(platform: str) -> list:
         return [RawInputBackend]
     if platform == "darwin":
         from views.ndof_macos import MacConnexionBackend
-        return [MacConnexionBackend]
+        from views.ndof_hid import HidBackend
+        return [MacConnexionBackend, HidBackend]
     return []
 
 
@@ -155,7 +176,7 @@ class SpnavBackend:
         except OSError:
             chunk = b""
         if not chunk:                       # the daemon went away
-            self.close()
+            self.owner.disconnected()
             return
         self._buf += chunk
         latest = None

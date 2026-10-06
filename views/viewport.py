@@ -5914,7 +5914,8 @@ class Viewport(QOpenGLWidget):
         saying how far the solid lets it go). No-op if there is no status bar
         yet."""
         window = self.window()
-        bar = window.statusBar() if window is not None else None
+        status_bar = getattr(window, "statusBar", None)
+        bar = status_bar() if callable(status_bar) else None
         if bar is not None:
             bar.showMessage(text, msec)
 
@@ -7457,9 +7458,12 @@ class Viewport(QOpenGLWidget):
         if not ok:
             return None, None
         p_near = inv.map(QVector3D(ndc_x, ndc_y, -1.0))
-        p_far = inv.map(QVector3D(ndc_x, ndc_y, 1.0))
-        direction = p_far - p_near
-        if direction.length() < 1e-9:
+        # The far-plane unprojection can overflow at millimetre zoom.
+        # Two finite interior depths define the same camera ray.
+        p_mid = inv.map(QVector3D(ndc_x, ndc_y, 0.0))
+        direction = p_mid - p_near
+        if (not all(math.isfinite(v) for p in (p_near, direction)
+                    for v in p.toTuple()) or direction.length() < 1e-9):
             return None, None
         return p_near, direction.normalized()
 
@@ -7539,7 +7543,9 @@ class Viewport(QOpenGLWidget):
         """Ray/plane hit, or ``None`` when it is behind the camera or the ray
         merely grazes the plane."""
         length = plane_normal.length()
-        if length < 1e-9:
+        if (not all(math.isfinite(v)
+                    for p in (origin, direction, plane_point, plane_normal)
+                    for v in p.toTuple()) or length < 1e-9):
             return None
         normal = plane_normal / length
         denom = QVector3D.dotProduct(normal, direction)
@@ -11500,6 +11506,7 @@ class Viewport(QOpenGLWidget):
             ev.globalPos(), locked_image=under if under is not picked else None)
 
     def mousePressEvent(self, ev) -> None:
+        self.setFocus(Qt.MouseFocusReason)
         # A new gesture starts with the inferences back on: the Alt
         # toggle lasts ONE operation. Mid-operation (the
         # second click of a line) the tool is still busy and nothing moves.
@@ -12696,7 +12703,7 @@ class Viewport(QOpenGLWidget):
                     comma_lists=getattr(self.active_tool, "vcb_comma_lists",
                                         False))
             if value is None:
-                self._set_value_buffer("")
+                self.flash_status(tr("Invalid dimensions. Use 100mm,50mm for a rectangle or 25mm for a radius."))
                 return True
             if isinstance(value, tuple) and value and value[0] == "ratio":
                 # A slope typed as rise:run ("3:12") — only angle
@@ -12742,7 +12749,9 @@ class Viewport(QOpenGLWidget):
                 if _re.search(r"[\d\"']\s*(mm|cm|m|in|ft)\b|\d\s*[\"']",
                               self._value_buffer.lower()):
                     value = ("abs_len", value)
-            self.active_tool.on_value(self, value)
+            if self.active_tool.on_value(self, value) is False:
+                self.flash_status(tr("Choose the first point, then enter valid dimensions."))
+                return True
             self._set_value_buffer("")
             self._release_axis_lock_after_operation()
             return True
@@ -12801,6 +12810,13 @@ class Viewport(QOpenGLWidget):
             # Forbid two decimal separators in the current numeric token.
             if text in (".", ","):
                 tail = self._current_token_tail()
+                if (getattr(self.active_tool, "vcb_comma_lists", False)
+                        and ";" not in self._value_buffer
+                        and not any(c.isspace() for c in self._value_buffer)):
+                    tail = tail.rsplit(",", 1)[-1]
+                    if text == ",":
+                        self._set_value_buffer(self._value_buffer + text)
+                        return True
                 if "." in tail or "," in tail:
                     return True
             self._set_value_buffer(self._value_buffer + text)

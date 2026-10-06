@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import ctypes
 
-from PySide6.QtCore import QObject, Qt, Signal, Slot
+from PySide6.QtCore import QObject, Qt, Signal, Slot, QTimer, QEvent
 from PySide6.QtGui import QGuiApplication
+from PySide6.QtWidgets import QApplication
 
 from core.ndof import NdofSample, from_hid
 
@@ -80,6 +81,9 @@ class MacConnexionBackend(QObject):
         self._buttons = 0
         self._active = False
         self._app = None
+        self._activation_timer = QTimer(self)
+        self._activation_timer.setInterval(100)
+        self._activation_timer.timeout.connect(self.refresh_activation)
         # The driver has its own thread. Copy its ephemeral message before
         # returning and process it on this QObject's (GUI) thread.
         self._state_received.connect(self._on_state, Qt.QueuedConnection)
@@ -108,7 +112,9 @@ class MacConnexionBackend(QObject):
             self._app = QGuiApplication.instance()
             if self._app is not None:
                 self._app.applicationStateChanged.connect(self.refresh_activation)
+                self._app.installEventFilter(self)
             self.refresh_activation()
+            self._activation_timer.start()
             return True
         except Exception:
             self.close()
@@ -119,16 +125,27 @@ class MacConnexionBackend(QObject):
 
         active = (self._app is not None
                   and self._app.applicationState() == Qt.ApplicationActive
+                  and QApplication.activeModalWidget() is None
                   and current_settings().enabled)
         if self.lib is None or not self.client_id:
+            return
+        if active == self._active:
             return
         result = ctypes.c_int32()
         error = self.lib.ConnexionClientControl(
             self.client_id, ACTIVATE_CLIENT if active else DEACTIVATE_CLIENT,
             0, ctypes.byref(result))
+        was_active = self._active
         self._active = active and error == 0
-        if not self._active:
+        if was_active and not self._active:
             self._reset()
+
+    def eventFilter(self, watched, event) -> bool:
+        # Reject queued device input as soon as a modal widget is shown;
+        # the timer also handles its close, once Qt clears the modal stack.
+        if event.type() in (QEvent.Show, QEvent.Hide):
+            self.refresh_activation()
+        return False
 
     def _message(self, _device: int, message: int, argument: int) -> None:
         if message == DEVICE_STATE_MESSAGE and argument:
@@ -137,6 +154,7 @@ class MacConnexionBackend(QObject):
 
     @Slot(bytes)
     def _on_state(self, data: bytes) -> None:
+        self.refresh_activation()
         if not self.client_id or not self._active:
             return
         state = ConnexionDeviceState.from_buffer_copy(data)
@@ -166,9 +184,11 @@ class MacConnexionBackend(QObject):
             self._reset()
 
     def close(self) -> None:
+        self._activation_timer.stop()
         self._active = False
         if self._app is not None:
             try:
+                self._app.removeEventFilter(self)
                 self._app.applicationStateChanged.disconnect(self.refresh_activation)
             except RuntimeError:  # QApplication may already be gone at atexit.
                 pass
