@@ -350,7 +350,9 @@ class MainWindow(QMainWindow):
     def _on_ndof_button(self, number: int, down: bool) -> None:
         # The two buttons every model has: both fit the model, the usual
         # default for the right one and the most useful single command.
-        if down and number in (0, 1) and self.isActiveWindow():
+        from views.ndof_input import current_settings
+        if (down and number in (0, 1) and self.isActiveWindow()
+                and current_settings().enabled):
             self._on_zoom_extents()
 
     def _pack_toolbars(self) -> None:

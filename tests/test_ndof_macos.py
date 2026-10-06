@@ -79,7 +79,8 @@ def _packet(command=3, client=42, axis=(0, 0, 0, 0, 0, 0), buttons=0,
 
 
 def test_platform_dispatch_selects_macos_backend():
-    assert ndof_input._backends_for("darwin") == [ndof_macos.MacConnexionBackend]
+    from views.ndof_hid import HidBackend
+    assert ndof_input._backends_for("darwin") == [ndof_macos.MacConnexionBackend, HidBackend]
     assert ndof_input._backends_for("win32") == [ndof_input.RawInputBackend]
     assert ndof_input._backends_for("linux") == [ndof_input.SpnavBackend]
 
@@ -231,3 +232,38 @@ def test_activation_failure_does_not_accept_motion(driver):
     lib.send(_packet(axis=(350, 0, 0, 0, 0, 0)))
     QCoreApplication.processEvents()
     assert not got
+
+
+def test_modal_dialog_releases_buttons_and_discards_pending_motion(driver, monkeypatch):
+    owner, lib, _app, _settings = driver
+    modal = [None]
+    monkeypatch.setattr(ndof_macos.QApplication, "activeModalWidget", lambda: modal[0])
+    assert owner.start()
+    buttons, motion = [], []
+    owner.button.connect(lambda *args: buttons.append(args))
+    owner.motion.connect(lambda *args: motion.append(args))
+    lib.send(_packet(command=2, buttons=1))
+    QCoreApplication.processEvents()
+    lib.send(_packet(axis=(350, 0, 0, 0, 0, 0)))
+    modal[0] = object()
+    QCoreApplication.processEvents()
+    assert buttons == [(0, True), (0, False)]
+    assert motion and all(sample.is_idle() for sample, _dt in motion)
+    assert not owner._backend._active
+    modal[0] = None
+    owner._backend.refresh_activation()
+    assert owner._backend._active
+
+
+def test_missing_driver_retries_and_stop_cancels_retry(driver):
+    owner, lib, _app, _settings = driver
+    lib.handler_error = -1
+    assert not owner.start() and owner._retry.isActive()
+    lib.handler_error = 0
+    owner._retry.timeout.emit()
+    assert owner.backend_name == "3Dconnexion (macOS)"
+    assert not owner._retry.isActive()
+    owner.disconnected()
+    assert owner.backend_name is None and owner._retry.isActive()
+    owner.stop()
+    assert not owner._retry.isActive()

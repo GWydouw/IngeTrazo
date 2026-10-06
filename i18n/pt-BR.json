@@ -2457,5 +2457,6 @@
  "Switch to X-ray, or back to the style you were in.": "Muda para raio-X, ou volta ao estilo em que você estava.",
  "Back edges": "Arestas de trás",
  "Draw the edges hidden behind faces as dashed lines.": "Desenha tracejadas as arestas que ficam atrás das faces.",
- "The Polygon properties example extension: area, centroid and second moments of a face.": "A extensão de exemplo Propriedades do polígono: área, centroide e momentos de segunda ordem de uma face."
+ "The Polygon properties example extension: area, centroid and second moments of a face.": "A extensão de exemplo Propriedades do polígono: área, centroide e momentos de segunda ordem de uma face.",
+ "No 3D mouse connection. On Linux start spacenavd; on Windows and macOS install the 3Dconnexion driver. Connection is retried automatically.": "Sem conexão com um mouse 3D. No Linux inicie spacenavd; no Windows e macOS instale o driver de 3Dconnexion. A conexão é tentada novamente de forma automática."
 }
