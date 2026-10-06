@@ -3062,7 +3062,8 @@ class EntityInfoPanel(QWidget):
 
     # ---- Layer field --------------------------------------------------------
     def _refresh_layer(self, sel: list) -> None:
-        from core.layers import layer_of
+        from core.layers import DEFAULT_LAYER, layer_of
+        from PySide6.QtCore import QCollator, QLocale
         tagged = [e for e in sel if isinstance(e, _TAGGABLE)]
         show = bool(tagged)
         self._layer_caption.setVisible(show)
@@ -3070,7 +3071,17 @@ class EntityInfoPanel(QWidget):
         if not show:
             return
         scene = self._window.viewport.scene
-        names = [ly.name for ly in scene.layers]
+        # SketchUp-style tag list: default first, then natural name order.
+        locale = QLocale()
+        if locale.language() == QLocale.Language.C:
+            locale = QLocale("en_US")
+        collator = QCollator(locale)
+        collator.setCaseSensitivity(Qt.CaseInsensitive)
+        collator.setNumericMode(True)
+        collator.setIgnorePunctuation(True)
+        names = sorted((ly.name for ly in scene.layers),
+                       key=lambda name: (name != DEFAULT_LAYER,
+                                         collator.sortKey(name)))
         current = {layer_of(e) for e in tagged}
         self._updating = True
         try:
