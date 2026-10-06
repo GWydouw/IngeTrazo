@@ -2407,6 +2407,11 @@ class Viewport(QOpenGLWidget):
         if (_NO_INSTANCING or getattr(g, "xform", None) is None
                 or getattr(g, "billboard", False)):
             return False
+        if getattr(self._effective_style(), "color_by_layer", False):
+            # Tag-colored faces have their own opacity-aware pass. Keeping
+            # their component edges instanced avoids baking a world-space
+            # material chunk for every transparent placement.
+            return True
         # A MIRRORED placement turns the prototype's triangles inside out
         # for GL (front becomes back). It used to fall back to the
         # consolidated path, one baked copy per placement — «mirrors are
@@ -2460,8 +2465,10 @@ class Viewport(QOpenGLWidget):
         memoised per tick (a paint or a hover) and scene version."""
         sc = self.scene
         tick = getattr(self, "_tick", 0)
+        layer_colors = bool(getattr(self._effective_style(), "color_by_layer", False))
+        memo_key = (tick, _cache_ver(self), layer_colors)
         memo = getattr(self, "_epoch_memo", None)
-        if memo is not None and memo[0] == (tick, _cache_ver(self)):
+        if memo is not None and memo[0] == memo_key:
             return memo[1]
         # Across ticks: while the version is live (not frozen by a groups
         # preview, whose matrices move without a version bump) and none of
@@ -2469,7 +2476,7 @@ class Viewport(QOpenGLWidget):
         # — every edit of a group goes through a command that bumps the
         # version. Orbiting a model of 21 406 placements walked them all on
         # every frame, ~55 ms (issue #158).
-        cheap = (sc.version, id(sc.edit_group), id(sc.mesh),
+        cheap = (sc.version, id(sc.edit_group), id(sc.mesh), layer_colors,
                  getattr(self, "_preview_epoch", 0),
                  bool(getattr(self, "_preview_groups", None)),
                  getattr(self, "_edit_rest_mode", None),
@@ -2481,9 +2488,9 @@ class Viewport(QOpenGLWidget):
         live = getattr(self, "_frozen_cache_version", None) is None
         same = getattr(self, "_epoch_same", None)
         if live and same is not None and same[0] == cheap:
-            self._epoch_memo = ((tick, _cache_ver(self)), same[1])
+            self._epoch_memo = (memo_key, same[1])
             return same[1]
-        parts: list = [id(sc.edit_group), id(sc.mesh),
+        parts: list = [id(sc.edit_group), id(sc.mesh), layer_colors,
                        getattr(self, "_preview_epoch", 0),
                        bool(getattr(self, "_preview_groups", None)),
                        getattr(self, "_edit_rest_mode", None),
@@ -2520,7 +2527,7 @@ class Viewport(QOpenGLWidget):
         for g in sc.groups:
             walk(g)
         epoch = hash(tuple(parts))
-        self._epoch_memo = ((tick, _cache_ver(self)), epoch)
+        self._epoch_memo = (memo_key, epoch)
         self._epoch_same = (cheap, epoch) if live else None
         return epoch
 
@@ -4830,8 +4837,11 @@ class Viewport(QOpenGLWidget):
 
     def _sync_edges(self) -> None:
         from core.layers import DEFAULT_LAYER
-        if _cache_ver(self) == self._edges_version:
+        layer_colors = bool(getattr(self._effective_style(), "color_by_layer", False))
+        if (_cache_ver(self) == self._edges_version
+                and getattr(self, "_edges_layer_colors", None) == layer_colors):
             return
+        self._edges_layer_colors = layer_colors
         _st0 = _time_mod.perf_counter() if _PERF else 0.0
 
         # The scene changed: purge hover/selection references to entities that

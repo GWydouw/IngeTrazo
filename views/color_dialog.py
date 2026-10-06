@@ -10,31 +10,20 @@ and custom colours."""
 from __future__ import annotations
 
 from core.i18n import tr
-from PySide6.QtCore import QRectF
+from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QColor, QPainter, QPainterPath
-from PySide6.QtWidgets import QColorDialog, QHBoxLayout, QLabel, QWidget
+from PySide6.QtWidgets import QColorDialog, QHBoxLayout, QLabel, QSlider, QWidget
 
 
 def get_color(*args, **kwargs):
     """``QColorDialog.getColor`` with Qt's own dialog."""
     checker_preview = kwargs.pop("checker_preview", False)
     if checker_preview:
-        initial = args[0]
-        dialog = QColorDialog(initial, args[1] if len(args) > 1 else None)
+        dialog = _TransparencyColorDialog(args[0], args[1] if len(args) > 1 else None)
         if len(args) > 2:
             dialog.setWindowTitle(args[2])
-        dialog.setOptions(QColorDialog.ColorDialogOption.DontUseNativeDialog
-                          | QColorDialog.ColorDialogOption.ShowAlphaChannel)
-        preview = _ColorPreview(initial, dialog)
-        dialog.currentColorChanged.connect(preview.set_color)
-        preview_row = QWidget(dialog)
-        preview_layout = QHBoxLayout(preview_row)
-        preview_layout.setContentsMargins(0, 0, 0, 0)
-        preview_layout.addWidget(QLabel(tr("Preview"), preview_row))
-        preview_layout.addWidget(preview, 1)
-        dialog.layout().insertWidget(dialog.layout().count() - 1, preview_row)
         if dialog.exec() == QColorDialog.Accepted:
-            return dialog.selectedColor()
+            return dialog.color_with_transparency()
         return QColor()
     kwargs.setdefault("options",
                       QColorDialog.ColorDialogOption.DontUseNativeDialog)
@@ -70,3 +59,39 @@ class _ColorPreview(QWidget):
     def paintEvent(self, event):
         painter = QPainter(self)
         paint_color_swatch(painter, self.rect().adjusted(0, 2, 0, -2), self._color, tile=8)
+
+
+class _TransparencyColorDialog(QColorDialog):
+    """A percentage slider with 0% opaque, independent of Qt's alpha field."""
+    def __init__(self, initial, parent=None):
+        opaque = QColor(initial)
+        opaque.setAlpha(255)
+        super().__init__(opaque, parent)
+        self.setOptions(QColorDialog.ColorDialogOption.DontUseNativeDialog)
+        self._transparency = QSlider(Qt.Horizontal, self)
+        self._transparency.setRange(0, 100)
+        self._transparency.setValue(round((1. - initial.alphaF()) * 100))
+        self._transparency.setAccessibleName(tr("Transparency"))
+        self._value = QLabel(self)
+        self._preview = _ColorPreview(initial, self)
+        for title, controls in ((tr("Transparency:"), (self._transparency, self._value)),
+                                (tr("Preview"), (self._preview,))):
+            row = QWidget(self)
+            layout = QHBoxLayout(row)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.addWidget(QLabel(title, row))
+            for control in controls:
+                layout.addWidget(control, 1 if control is not self._value else 0)
+            self.layout().insertWidget(self.layout().count() - 1, row)
+        self._transparency.valueChanged.connect(self._update_preview)
+        self.currentColorChanged.connect(self._update_preview)
+        self._update_preview()
+
+    def color_with_transparency(self):
+        color = QColor(self.currentColor())
+        color.setAlphaF(1. - self._transparency.value() / 100.)
+        return color
+
+    def _update_preview(self, *_):
+        self._value.setText(f"{self._transparency.value()}%")
+        self._preview.set_color(self.color_with_transparency())
