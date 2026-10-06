@@ -10705,8 +10705,9 @@ class ComposerWindow(QMainWindow):
         if not isinstance(item, LeyendaItem):
             return
         item.prepareGeometryChange()
-        self._panel_edit(item, {"rows": [ly.name for ly in
-                                         self._scene().layers if self._scene().layer_state(ly.name)[0]]})
+        self._panel_edit(item, {"rows": [
+            ly.name for ly in self._scene().layers if self._scene().layer_state(ly.name)[0]
+        ]})
 
     def _on_forma_props(self, *_a) -> None:
         item = self._selected_item()

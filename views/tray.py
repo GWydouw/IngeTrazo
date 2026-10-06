@@ -3720,7 +3720,8 @@ class LayersPanel(QWidget):
         name = item.data(0, Qt.UserRole)
         from core.layers import LayerFolder
         if isinstance(name, LayerFolder):
-            self._window.statusBar().showMessage(tr("Click a layer in the list first, then Assign."), 3000)
+            self._window.statusBar().showMessage(
+                tr("Click a layer in the list first, then Assign."), 3000)
             return
         # Annotations are tagged too: a "Anotaciones" layer a
         # scene hides gives a clean plan without duplicating the model.

@@ -91,13 +91,15 @@ class LayerFolder:
         self.visible = bool(visible)
         self.locked = bool(locked)
 
-    def to_dict(self):
+    def to_dict(self) -> dict:
+        """Serialize the folder hierarchy and state for a document."""
         return dict(name=self.name, uid=self.uid, parent_id=self.parent_id,
                     position=self.position, expanded=self.expanded,
                     visible=self.visible, locked=self.locked)
 
     @classmethod
-    def from_dict(cls, raw):
+    def from_dict(cls, raw: dict) -> "LayerFolder":
+        """Restore a folder, using defaults for omitted document fields."""
         return cls(raw.get("name", "Folder"), uid=raw.get("uid"),
                    parent_id=raw.get("parent_id"), position=raw.get("position", 0),
                    expanded=raw.get("expanded", True),
