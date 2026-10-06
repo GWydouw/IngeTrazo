@@ -66,6 +66,8 @@ def _load_framework():
 
 
 class MacConnexionBackend(QObject):
+    """Receive driver events and keep device ownership aligned with app focus."""
+
     name = "3Dconnexion (macOS)"
     _state_received = Signal(bytes)
     _device_removed = Signal()
@@ -86,6 +88,7 @@ class MacConnexionBackend(QObject):
         self._device_removed.connect(self._on_removed, Qt.QueuedConnection)
 
     def open(self) -> bool:
+        """Register with the driver; return whether a client was created."""
         if self.client_id:
             return True
         try:
@@ -115,6 +118,7 @@ class MacConnexionBackend(QObject):
             raise
 
     def refresh_activation(self, *_args) -> None:
+        """Activate the client when the application is focused and input is enabled."""
         from views.ndof_input import current_settings
 
         active = (self._app is not None
@@ -166,6 +170,7 @@ class MacConnexionBackend(QObject):
             self._reset()
 
     def close(self) -> None:
+        """Release the client, callbacks and application focus connection."""
         self._active = False
         if self._app is not None:
             try:
