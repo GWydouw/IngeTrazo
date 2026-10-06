@@ -2454,6 +2454,27 @@ class Viewport(QOpenGLWidget):
         plain one."""
         return self._group_chunk(_proto_wrapper(self, mesh, paint))
 
+    def _layer_opacity_state(self):
+        """Resolve tag opacity once per appearance change, not per chunk.
+
+        Keep a raw signature so direct layer edits (without a scene version
+        bump) also invalidate material chunks and the placement epoch.
+        Geometry edits and camera motion do not change these values.
+        """
+        sc = self.scene
+        signature = (tuple((ly.name, ly.folder_id, ly.transparency)
+                           for ly in sc.layers),
+                     tuple((f.uid, f.parent_id, f.transparency)
+                           for f in sc.layer_folders))
+        cached = getattr(self, "_layer_opacity_cache", None)
+        if cached is None or cached[0] != signature:
+            transparent = any(ly.transparency for ly in sc.layers) or any(
+                f.transparency for f in sc.layer_folders)
+            opacity = {ly.name: sc.layer_opacity(ly.name) if transparent else 1.0
+                       for ly in sc.layers}
+            cached = self._layer_opacity_cache = (signature, transparent, opacity)
+        return cached
+
     def _placements_epoch(self):
         """A signature of everything the per-frame placement passes read:
         the group tree (ids, matrices, mesh mutation serials, tags), the
@@ -2476,13 +2497,14 @@ class Viewport(QOpenGLWidget):
         # — every edit of a group goes through a command that bumps the
         # version. Orbiting a model of 21 406 placements walked them all on
         # every frame, ~55 ms (issue #158).
+        opacity = self._layer_opacity_state()[2]
         cheap = (sc.version, id(sc.edit_group), id(sc.mesh), layer_colors,
                  getattr(self, "_preview_epoch", 0),
                  bool(getattr(self, "_preview_groups", None)),
                  getattr(self, "_edit_rest_mode", None),
                  bool(getattr(sc, "show_hidden_objects", False)),
                  bool(getattr(sc, "show_hidden_geometry", False)),
-                 tuple((ly.name, sc.layer_state(ly.name), sc.layer_opacity(ly.name))
+                 tuple((ly.name, sc.layer_state(ly.name), opacity[ly.name])
                        for ly in sc.layers),
                  len(sc.groups))
         live = getattr(self, "_frozen_cache_version", None) is None
@@ -2504,7 +2526,7 @@ class Viewport(QOpenGLWidget):
                        # @pacaeiro).
                        bool(getattr(sc, "show_hidden_objects", False)),
                        bool(getattr(sc, "show_hidden_geometry", False)),
-                       tuple((ly.name, sc.layer_state(ly.name), sc.layer_opacity(ly.name))
+                       tuple((ly.name, sc.layer_state(ly.name), opacity[ly.name])
                              for ly in sc.layers)]
 
         loose = sc.mesh
@@ -8432,9 +8454,8 @@ class Viewport(QOpenGLWidget):
         from core.materials import effective_attrs, material_sig
         paint = effective_material(group)
         msig = material_sig(paint)
-        if self.scene.layer_has_transparency():
-            layer_sig = tuple((ly.name, self.scene.layer_opacity(ly.name))
-                              for ly in self.scene.layers)
+        layer_sig, transparent, _ = Viewport._layer_opacity_state(self)
+        if transparent:
             msig = (msig or ()) + (("layer-opacity", layer_sig,
                                    getattr(group, "layer", None)),)
         if entry is not None and entry.get("msig") != msig:

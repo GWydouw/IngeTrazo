@@ -329,3 +329,42 @@ def test_color_by_layer_keeps_transparent_instances_shared_and_rekeys_modes():
         assert vp._placements_epoch() == before
     finally:
         vp.close()
+
+
+def test_many_layer_chunk_checks_reuse_opacity_resolution(monkeypatch):
+    """Profiles and picking revisit chunks; they must not resolve every tag."""
+    from views.viewport import Viewport
+    vp = Viewport()
+    try:
+        vp._chunk_cache_load = vp._chunk_cache_store = None
+        scene = vp.scene
+        folder = LayerFolder('Glass', transparency=20)
+        scene.layer_folders.append(folder)
+        scene.layers.extend(Layer(f'Tag {i}', folder_id=folder.uid)
+                            for i in range(80))
+        group = Group(); group.layer = 'Tag 79'; triangle(group.mesh)
+        scene.groups.append(group)
+        before = vp._group_chunk(group)
+        original = Scene.layer_opacity
+        calls = []
+
+        def counted(self, *args, **kwargs):
+            calls.append(args)
+            return original(self, *args, **kwargs)
+
+        monkeypatch.setattr(Scene, 'layer_opacity', counted)
+        for _ in range(10):
+            assert vp._group_chunk(group) is before
+        assert calls == []
+        # Appearance can be changed without a version bump; both caches
+        # must see it, including reparenting and removal of transparency.
+        folder.transparency = 50
+        after = vp._group_chunk(group)
+        assert after['uid'] != before['uid'] and (.5, 0) in after['tcol']
+        assert vp._layer_opacity_state()[2]['Tag 79'] == .5
+        scene.layer('Tag 79').folder_id = None
+        assert vp._layer_opacity_state()[2]['Tag 79'] == 1.0
+        folder.transparency = 0
+        assert vp._layer_opacity_state()[1] is False
+    finally:
+        vp.close()
