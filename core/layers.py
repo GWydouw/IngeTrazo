@@ -14,7 +14,32 @@ parallel projection with the right layers on IS the plan drawing.
 """
 from __future__ import annotations
 
+import math
+
+LINE_STYLES = ("solid", "dashed", "dotted")
+
+
+def _optional_rgb(raw):
+    """Validate an optional line colour, including values from saved files."""
+    if raw is None:
+        return None
+    try:
+        values = tuple(float(c) for c in raw)
+    except (TypeError, ValueError):
+        return None
+    if len(values) != 3 or not all(math.isfinite(c) for c in values):
+        return None
+    return tuple(max(0.0, min(1.0, c)) for c in values)
+
 DEFAULT_LAYER = "Layer 0"
+
+
+def _transparency(raw):
+    try:
+        value = float(raw)
+        return max(0, min(100, round(value))) if math.isfinite(value) else 0
+    except (TypeError, ValueError):
+        return 0
 
 # Where an imported photogrammetric survey lands (Track G, G6). Its own layer
 # by default, not the default one: the whole point of importing a survey is to
@@ -29,13 +54,19 @@ class Layer:
     """A named tag with display state."""
 
     def __init__(self, name: str, visible: bool = True,
-                 locked: bool = False, folder_id=None, position=0, color=None) -> None:
+                 locked: bool = False, folder_id=None, position=0, color=None,
+                 edge_color=None, line_style=None, tint_color=None,
+                 transparency=0) -> None:
         self.name = name
         self.color = tuple(color) if color is not None else default_layer_color(name)
         self.visible = visible
         self.locked = locked
         self.folder_id = folder_id if name != DEFAULT_LAYER else None
         self.position = int(position)
+        self.edge_color = _optional_rgb(edge_color)
+        self.line_style = line_style if line_style in LINE_STYLES else None
+        self.tint_color = _optional_rgb(tint_color)
+        self.transparency = _transparency(transparency)
 
     def to_dict(self) -> dict:
         entry: dict = {"name": self.name, "color": list(self.color)}
@@ -47,6 +78,14 @@ class Layer:
             entry["folder_id"] = self.folder_id
         if self.position:
             entry["position"] = self.position
+        if self.edge_color is not None:
+            entry["edge_color"] = list(self.edge_color)
+        if self.line_style is not None:
+            entry["line_style"] = self.line_style
+        if self.tint_color is not None:
+            entry["tint_color"] = list(self.tint_color)
+        if self.transparency:
+            entry["transparency"] = self.transparency
         return entry
 
     @classmethod
@@ -55,7 +94,9 @@ class Layer:
                    visible=raw.get("visible", True),
                    locked=raw.get("locked", False),
                    folder_id=raw.get("folder_id"), position=raw.get("position", 0),
-                   color=raw.get("color"))
+                   color=raw.get("color"), edge_color=raw.get("edge_color"),
+                   line_style=raw.get("line_style"), tint_color=raw.get("tint_color"),
+                   transparency=raw.get("transparency", 0))
 
 
 def layer_of(entity) -> str:
@@ -83,7 +124,8 @@ class LayerFolder:
     """Nested tag organization, with inherited visibility and locking."""
 
     def __init__(self, name, uid=None, parent_id=None, position=0,
-                 expanded=True, visible=True, locked=False):
+                 expanded=True, visible=True, locked=False,
+                 edge_color=None, line_style=None, tint_color=None, transparency=0):
         from uuid import uuid4
         self.name = name
         self.uid = uid or str(uuid4())
@@ -92,18 +134,33 @@ class LayerFolder:
         self.expanded = bool(expanded)
         self.visible = bool(visible)
         self.locked = bool(locked)
+        self.edge_color = _optional_rgb(edge_color)
+        self.line_style = line_style if line_style in LINE_STYLES else None
+        self.tint_color = _optional_rgb(tint_color)
+        self.transparency = _transparency(transparency)
 
     def to_dict(self):
-        return dict(name=self.name, uid=self.uid, parent_id=self.parent_id,
+        entry = dict(name=self.name, uid=self.uid, parent_id=self.parent_id,
                     position=self.position, expanded=self.expanded,
                     visible=self.visible, locked=self.locked)
+        if self.edge_color is not None:
+            entry["edge_color"] = list(self.edge_color)
+        if self.line_style is not None:
+            entry["line_style"] = self.line_style
+        if self.tint_color is not None:
+            entry["tint_color"] = list(self.tint_color)
+        if self.transparency:
+            entry["transparency"] = self.transparency
+        return entry
 
     @classmethod
     def from_dict(cls, raw):
         return cls(raw.get("name", "Folder"), uid=raw.get("uid"),
                    parent_id=raw.get("parent_id"), position=raw.get("position", 0),
                    expanded=raw.get("expanded", True),
-                   visible=raw.get("visible", True), locked=raw.get("locked", False))
+                   visible=raw.get("visible", True), locked=raw.get("locked", False),
+                   edge_color=raw.get("edge_color"), line_style=raw.get("line_style"),
+                   tint_color=raw.get("tint_color"), transparency=raw.get("transparency", 0))
 
 
 def default_layer_color(name):

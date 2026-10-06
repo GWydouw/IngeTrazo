@@ -137,7 +137,7 @@ def test_layer_panel_switch_and_color_swatch():
                 if panel.tree.topLevelItem(i).data(0, Qt.UserRole) == 'Walls')
     assert item.data(3, Qt.UserRole + 2).redF() == 1.
     assert item.background(3).style() == Qt.NoBrush
-    assert panel.tree.columnWidth(3) == 44
+    assert panel.tree.columnWidth(3) == 24
     panel._color_by_layer.setChecked(False)
     assert not scene.display_style.color_by_layer
     panel.close()

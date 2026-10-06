@@ -216,9 +216,9 @@ def test_multiple_selection_survives_refresh_and_rename(panel):
     walls = tree.topLevelItem(1).child(0).child(0)
     furniture = tree.topLevelItem(2)
     QTest.mouseClick(tree.viewport(), Qt.LeftButton, Qt.NoModifier,
-                     tree.visualItemRect(walls).center())
+                     tree.visualRect(tree.indexFromItem(walls, 0)).center())
     QTest.mouseClick(tree.viewport(), Qt.LeftButton, Qt.ShiftModifier,
-                     tree.visualItemRect(furniture).center())
+                     tree.visualRect(tree.indexFromItem(furniture, 0)).center())
     assert {panel._item_value(i) for i in tree.selectedItems()} == {'Walls', 'Furniture'}
     panel.refresh()
     assert {panel._item_value(i) for i in tree.selectedItems()} == {'Walls', 'Furniture'}
@@ -303,7 +303,7 @@ def test_context_menu_keeps_multiple_selection(panel, monkeypatch):
         def exec(self, *args):
             pass
     monkeypatch.setattr(tray, 'QMenu', Menu)
-    panel._on_context_menu(tree.visualItemRect(walls).center())
+    panel._on_context_menu(tree.visualRect(tree.indexFromItem(walls, 0)).center())
     assert {panel._item_value(i) for i in tree.selectedItems()} == {'Walls', 'Furniture'}
     assert panel._item_value(tree.currentItem()) == 'Walls'
 
