@@ -3721,8 +3721,6 @@ class LayersPanel(QWidget):
         # instead of setting the whole right-hand dock area's minimum width.
         row = FlowLayout(spacing=4)
         folder_btn = QPushButton(tr("+ Folder"))
-        folder_btn.setIcon(QIcon(str(Path(__file__).resolve().parent.parent /
-                                    "resources/icons/folderplus.svg")))
         folder_btn.clicked.connect(self._on_add_folder)
         row.addWidget(folder_btn)
         row.addWidget(add_btn)
@@ -4367,8 +4365,6 @@ class ScenesPanel(QWidget):
         del_btn.clicked.connect(self._on_delete)
         row = FlowLayout(spacing=4)          # wraps in a narrow tray (see Layers)
         folder_btn = QPushButton(tr("+ Folder"))
-        folder_btn.setIcon(QIcon(str(Path(__file__).resolve().parent.parent /
-                                    "resources/icons/folderplus.svg")))
         folder_btn.setToolTip(tr("Create a folder inside the selected folder"))
         folder_btn.clicked.connect(self._on_add_folder)
         row.addWidget(folder_btn)
