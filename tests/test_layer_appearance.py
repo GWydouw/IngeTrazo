@@ -211,6 +211,10 @@ def test_native_opacity_and_tint_preserve_original_face_material(mode, by_layer)
         folder.transparency = 50; vp.scene.version += 1
         faded = pixel()
         assert faded == pytest.approx(tuple((c + 255) / 2 for c in original), abs=3)
+        layer.transparency = 50; vp.scene.version += 1
+        combined = pixel()
+        assert combined == pytest.approx(tuple(c * .25 + 255 * .75 for c in original), abs=3)
+        layer.transparency = 0
         folder.transparency = 0
         folder.tint_color = (0., 1., 0.); vp.scene.version += 1
         tinted = pixel()
@@ -220,3 +224,54 @@ def test_native_opacity_and_tint_preserve_original_face_material(mode, by_layer)
         assert pixel() == original
     finally:
         vp.close()
+
+
+def test_layer_color_picker_transparency_reaches_display_and_saved_file(panel, monkeypatch, tmp_path):
+    from PySide6.QtGui import QColor
+    from views import tray
+    layer = Layer('Glass', color=(.2, .4, .6), transparency=25)
+    scene = panel._scene()
+    scene.layers.append(layer)
+    scene.display_style.color_by_layer = True
+    face = triangle(scene.mesh)
+    face.attrs.update(layer='Glass', opacity=.8)
+    panel.refresh()
+    item = panel.tree.topLevelItem(1)
+    captured = {}
+    def choose(initial, parent, title, **options):
+        captured.update(alpha=initial.alphaF(), options=options)
+        return QColor.fromRgbF(.7, .2, .3, .4)
+    monkeypatch.setattr(tray, 'get_color', choose)
+    panel._on_color_clicked(item, 3)
+    assert captured['alpha'] == pytest.approx(.75, abs=.001)
+    assert captured['options']['checker_preview']
+    assert layer.transparency == 60
+    _, runs = layer_face_buffers(scene, lambda face: face.triangulate())
+    assert runs[0][1] == pytest.approx(.4)
+    assert face.attrs['opacity'] == .8
+    chip = panel.tree.topLevelItem(1).data(3, Qt.UserRole + 2)
+    assert chip.alphaF() == pytest.approx(.4, abs=.001)
+    path = tmp_path / 'transparent-layer.igz'
+    igz.save_scene(scene, path)
+    restored = Scene()
+    igz.load_into(restored, path)
+    assert restored.layer('Glass').transparency == 60
+    assert restored.display_style.color_by_layer
+
+
+def test_transparent_swatch_composites_over_checkerboard():
+    from PySide6.QtCore import QRect
+    from PySide6.QtGui import QColor, QImage, QPainter
+    from views.color_dialog import paint_color_swatch
+    image = QImage(32, 16, QImage.Format_ARGB32)
+    image.fill(Qt.white)
+    painter = QPainter(image)
+    paint_color_swatch(painter, QRect(0, 0, 32, 16), QColor(255, 0, 0, 128))
+    painter.end()
+    dark, light = image.pixelColor(2, 2), image.pixelColor(6, 2)
+    assert dark.red() > dark.green() and light.red() > light.green()
+    assert dark.green() < light.green()
+    painter = QPainter(image)
+    paint_color_swatch(painter, QRect(0, 0, 32, 16), QColor(255, 0, 0))
+    painter.end()
+    assert image.pixelColor(2, 2) == image.pixelColor(6, 2) == QColor(255, 0, 0)

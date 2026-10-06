@@ -54,7 +54,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from views.color_dialog import get_color
+from views.color_dialog import get_color, paint_color_swatch
 from core.i18n import tr
 from views.theme import style as theme_style
 from views.filedialogs import file_dialogs
@@ -3307,7 +3307,8 @@ class _LayerColorDelegate(QStyledItemDelegate):
         chip = QRect(center.x() - 7, center.y() - 7, 14, 14)
         painter.save()
         painter.setPen(QColor(0, 0, 0, 100))
-        painter.setBrush(color)
+        paint_color_swatch(painter, chip, color)
+        painter.setBrush(Qt.NoBrush)
         painter.drawRoundedRect(chip, 2, 2)
         painter.restore()
 
@@ -3780,7 +3781,8 @@ class LayersPanel(QWidget):
             items.get(parent_id, self.tree.invisibleRootItem()).addChild(items[folder.uid])
         for ly in scene.layers:
             item = QTreeWidgetItem([ly.name, "", ""])
-            item.setData(3, Qt.UserRole + 2, QColor.fromRgbF(*ly.color))
+            item.setData(3, Qt.UserRole + 2, QColor.fromRgbF(
+                *ly.color, scene.layer_opacity(ly.name)))
             item.setToolTip(3, tr("Double-click to change layer color"))
             item.setData(0, Qt.UserRole, ly.name)
             # QString strips a leading U+FEFF (present in imported SKP tags).
@@ -4092,10 +4094,12 @@ class LayersPanel(QWidget):
         layer = self._scene().layer(self._item_value(item))
         if layer is None:
             return
-        chosen = get_color(QColor.fromRgbF(*layer.color),
-                           _dialog_parent(self), tr("Layer color"))
+        initial = QColor.fromRgbF(*layer.color, 1. - layer.transparency / 100.)
+        chosen = get_color(initial, _dialog_parent(self), tr("Layer color"),
+                           checker_preview=True)
         if chosen.isValid():
             layer.color = (chosen.redF(), chosen.greenF(), chosen.blueF())
+            layer.transparency = round((1. - chosen.alphaF()) * 100)
             self.refresh()
             self._touch()
 
