@@ -3612,16 +3612,11 @@ class _VerticalResizeHandle(QFrame):
 
 
 class LayersPanel(QWidget):
-    """Layers / tags (Fase 6): one row per layer with visibility and lock
-    checkboxes; buttons to add / remove layers and to move the current
-    selection onto a layer. Hiding layers of one model is the '2D that
-    emerges' workflow: plan = top view + parallel projection + the right
-    layers on."""
+    """Shared layers / tags tree with a compact action and search toolbar."""
 
     def __init__(self, window) -> None:
         super().__init__()
-        from PySide6.QtWidgets import (QAbstractItemView, QHeaderView, QHBoxLayout,
-                                       QPushButton, QVBoxLayout)
+        from PySide6.QtWidgets import QAbstractItemView, QHeaderView
         self._window = window
         self._updating = False
         self._sort_column = -1
@@ -3635,7 +3630,53 @@ class LayersPanel(QWidget):
         self.filter_input.setPlaceholderText(tr("Filter layers"))
         self.filter_input.setClearButtonEnabled(True)
         self.filter_input.textChanged.connect(self._filter_layers)
-        lay.addWidget(self.filter_input)
+        from views.icons import tool_icon
+        toolbar = QHBoxLayout()
+        toolbar.setSpacing(2)
+
+        def icon_button(key, label, callback=None):
+            button = QToolButton(self)
+            button.setIcon(tool_icon(key))
+            button.setIconSize(QSize(22, 22))
+            button.setFixedSize(28, 28)
+            button.setAutoRaise(True)
+            button.setToolTip(tr(label))
+            button.setAccessibleName(tr(label))
+            if callback is not None:
+                button.clicked.connect(callback)
+            toolbar.addWidget(button)
+            return button
+
+        self.add_button = icon_button("add_tag", "Add layer", self._on_add)
+        self.folder_button = icon_button("add_tag_folder", "New folder", self._on_add_folder)
+        toolbar.addSpacing(6)
+        self.filter_input.setMinimumWidth(36)
+        toolbar.addWidget(self.filter_input, 1)
+        self._color_by_layer = icon_button("color_by_tag", "Color by layer")
+        self._color_by_layer.setCheckable(True)
+        self._color_by_layer.setStyleSheet(
+            "QToolButton { border: none; background: transparent; padding: 0; }"
+            "QToolButton:checked { border: none; background: transparent; }")
+        self._color_by_layer.toggled.connect(self._on_color_by_layer)
+        self.assign_button = icon_button("assign_tag", "Assign selection", self._on_assign)
+        self.assign_button.setToolTip(tr("Move the selected entities onto the layer "
+                                         "highlighted in the list (also: Entity "
+                                         "info ▸ Layer, or right-click ▸ Layer)"))
+        self._actions_menu = QMenu(self)
+        self._actions_menu.addAction(tr("Expand All"), lambda: self._set_all_expanded(True))
+        self._actions_menu.addAction(tr("Collapse All"), lambda: self._set_all_expanded(False))
+        self._actions_menu.addSeparator()
+        self.delete_button = self._actions_menu.addAction(tr("Delete"), self._on_delete)
+        self.edit_button = self._actions_menu.addAction(tr("Edit appearance…"), self._on_edit_appearance)
+        self._actions_menu.addSeparator()
+        self._actions_menu.addAction(tr("Purge"), self._on_purge)
+        self.menu_button = icon_button("more_options", "More options")
+        self.menu_button.setStyleSheet(
+            "QToolButton::menu-indicator { image: none; width: 0; height: 0; }")
+        self.menu_button.setMenu(self._actions_menu)
+        self.menu_button.setPopupMode(QToolButton.InstantPopup)
+        self._actions_menu.aboutToShow.connect(self._update_action_buttons)
+        lay.addLayout(toolbar)
         self.tree = LayerTree()
         self.tree.setHeaderHidden(False)
         self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
@@ -3688,41 +3729,6 @@ class LayersPanel(QWidget):
         lay.addWidget(self.tree)
         self._resize_handle = _VerticalResizeHandle(self.tree, self._set_height)
         lay.addWidget(self._resize_handle)
-        self._color_by_layer = QCheckBox(tr("Color by layer"))
-        self._color_by_layer.toggled.connect(self._on_color_by_layer)
-        lay.addWidget(self._color_by_layer)
-        row = QHBoxLayout()
-        add_btn = QPushButton(tr("+ Layer"))
-        add_btn.clicked.connect(self._on_add)
-        del_btn = QPushButton(tr("−"))
-        self.delete_button = del_btn
-        del_btn.setToolTip(tr("Delete layer (its entities go to the default)"))
-        del_btn.clicked.connect(self._on_delete)
-        purge_btn = QPushButton(tr("Purge"))
-        purge_btn.setToolTip(tr("Delete every layer no entity carries "
-                                "(a layer a scene hides is kept)"))
-        purge_btn.clicked.connect(self._on_purge)
-        assign_btn = QPushButton(tr("Assign selection"))
-        self.assign_button = assign_btn
-        assign_btn.setToolTip(tr("Move the selected entities onto the layer "
-                                 "highlighted in the list (also: Entity "
-                                 "info ▸ Layer, or right-click ▸ Layer)"))
-        assign_btn.clicked.connect(self._on_assign)
-        # A flow, not a row: the four buttons wrap when the tray is narrow
-        # instead of setting the whole right-hand dock area's minimum width.
-        row = FlowLayout(spacing=4)
-        folder_btn = QPushButton(tr("+ Folder"))
-        folder_btn.clicked.connect(self._on_add_folder)
-        row.addWidget(folder_btn)
-        row.addWidget(add_btn)
-        row.addWidget(del_btn)
-        row.addWidget(purge_btn)
-        row.addWidget(assign_btn)
-        line_btn = QPushButton(tr("Edit appearance…"))
-        self.edit_button = line_btn
-        line_btn.clicked.connect(self._on_edit_appearance)
-        row.addWidget(line_btn)
-        lay.addLayout(row)
         self.tree.itemSelectionChanged.connect(self._update_action_buttons)
         self.tree.currentItemChanged.connect(self._update_action_buttons)
         from PySide6.QtCore import QTimer
@@ -3752,6 +3758,9 @@ class LayersPanel(QWidget):
         self.tree.clear()
         scene = self._scene()
         self._color_by_layer.setChecked(scene.display_style.color_by_layer)
+        from views.icons import tool_icon
+        self._color_by_layer.setIcon(tool_icon(
+            "color_by_tag_on" if scene.display_style.color_by_layer else "color_by_tag"))
         if scene.layer(scene.active_layer) is None:
             scene.active_layer = DEFAULT_LAYER
         folders = {f.uid: f for f in scene.layer_folders}
@@ -4008,6 +4017,20 @@ class LayersPanel(QWidget):
             self._item_value(item).expanded = item.isExpanded()
             self._fit_tree()
             self._touch()
+
+    def _set_all_expanded(self, expanded):
+        self._updating = True
+        try:
+            for folder in self._scene().layer_folders:
+                folder.expanded = expanded
+            if expanded:
+                self.tree.expandAll()
+            else:
+                self.tree.collapseAll()
+        finally:
+            self._updating = False
+        self._fit_tree()
+        self._touch()
 
     def _on_tree_moved(self):
         from core.layers import DEFAULT_LAYER, LayerFolder
@@ -4357,6 +4380,35 @@ class ScenesPanel(QWidget):
         lay.setContentsMargins(8, 6, 8, 8)
         hint = QLabel(tr("Double-click a scene to show it"))
         hint.setStyleSheet("color: gray;")
+        hint.setWordWrap(True)
+        from views.icons import tool_icon
+        toolbar = QHBoxLayout()
+        toolbar.setSpacing(2)
+
+        def icon_button(key, label, tooltip, callback):
+            button = QToolButton(self)
+            button.setIcon(tool_icon(key))
+            button.setIconSize(QSize(22, 22))
+            button.setFixedSize(28, 28)
+            button.setAutoRaise(True)
+            button.setToolTip(tr(tooltip))
+            button.setAccessibleName(tr(label))
+            button.clicked.connect(callback)
+            toolbar.addWidget(button)
+            return button
+
+        self.add_button = icon_button("add_tag", "Add scene",
+                                     "Save the current view and layer visibility", self._on_add)
+        self.folder_button = icon_button("add_tag_folder", "New folder",
+                                        "Create a folder inside the selected folder", self._on_add_folder)
+        toolbar.addSpacing(6)
+        self.filter_input = QLineEdit()
+        self.filter_input.setPlaceholderText(tr("Filter scenes"))
+        self.filter_input.setClearButtonEnabled(True)
+        self.filter_input.setMinimumWidth(36)
+        self.filter_input.textChanged.connect(self._filter_scenes)
+        toolbar.addWidget(self.filter_input, 1)
+        lay.addLayout(toolbar)
         lay.addWidget(hint)
         from views.scene_tree import SceneTree
         self.list = SceneTree()
@@ -4370,24 +4422,6 @@ class ScenesPanel(QWidget):
         lay.addWidget(self.list)
         self._resize_handle = _VerticalResizeHandle(self.list, self._set_height)
         lay.addWidget(self._resize_handle)
-        add_btn = QPushButton(tr("+ Scene"))
-        add_btn.setToolTip(tr("Save the current view and layer visibility"))
-        add_btn.clicked.connect(self._on_add)
-        upd_btn = QPushButton(tr("Update"))
-        upd_btn.setToolTip(tr("Update the selected scene from the current view"))
-        upd_btn.clicked.connect(self._on_update)
-        del_btn = QPushButton(tr("−"))
-        del_btn.setToolTip(tr("Delete selected scenes or folders; folder contents are kept"))
-        del_btn.clicked.connect(self._on_delete)
-        row = FlowLayout(spacing=4)          # wraps in a narrow tray (see Layers)
-        folder_btn = QPushButton(tr("+ Folder"))
-        folder_btn.setToolTip(tr("Create a folder inside the selected folder"))
-        folder_btn.clicked.connect(self._on_add_folder)
-        row.addWidget(folder_btn)
-        row.addWidget(add_btn)
-        row.addWidget(upd_btn)
-        row.addWidget(del_btn)
-        lay.addLayout(row)
         self.refresh()
 
     def _scene(self):
@@ -4443,13 +4477,40 @@ class ScenesPanel(QWidget):
                 if any(obj is v for v in selected):
                     item.setSelected(True)
         order(self.list.invisibleRootItem())
-        self._fit_tree()
+        self._filter_scenes(self.filter_input.text())
         self._updating = False
+
+    def _filter_scenes(self, text):
+        from core.saved_views import SceneFolder
+        query = text.strip().casefold()
+        previous = self._updating
+        self._updating = True
+
+        def visit(item, ancestor_match=False):
+            value = item.data(0, Qt.UserRole)
+            matches = not query or ancestor_match or query in value.name.casefold()
+            children = [visit(item.child(i), matches and bool(query))
+                        for i in range(item.childCount())]
+            visible = matches or any(children)
+            item.setHidden(not visible)
+            if query and any(children):
+                item.setExpanded(True)
+            elif not query and isinstance(value, SceneFolder):
+                item.setExpanded(value.expanded)
+            return visible
+
+        for i in range(self.list.topLevelItemCount()):
+            visit(self.list.topLevelItem(i))
+        self._updating = previous
+        self.list.setDragEnabled(not query)
+        self.list.setAcceptDrops(not query)
+        self._fit_tree()
 
     def _fit_tree(self):
         def count(parent):
             return sum(1 + (count(parent.child(i)) if parent.child(i).isExpanded()
-                            else 0) for i in range(parent.childCount()))
+                            else 0) for i in range(parent.childCount())
+                       if not parent.child(i).isHidden())
         rows = count(self.list.invisibleRootItem())
         height = self.list.sizeHintForRow(0) if rows else 0
         height = max(height, self.list.fontMetrics().height() + 4)
@@ -4506,6 +4567,7 @@ class ScenesPanel(QWidget):
         return max(positions, default=-1) + 1
 
     def _on_context_menu(self, point):
+        from core.saved_views import SavedView
         item = self.list.itemAt(point)
         if item is not None and not item.isSelected():
             self.list.setCurrentItem(item)
@@ -4515,9 +4577,13 @@ class ScenesPanel(QWidget):
         menu = QMenu(self)
         menu.addAction(tr("New folder"), self._on_add_folder)
         if item is not None:
+            if isinstance(item.data(0, Qt.UserRole), SavedView):
+                update_action = menu.addAction(tr("Update"), self._on_update)
+                update_action.setToolTip(tr("Update the selected scene from the current view"))
             menu.addAction(tr("Rename"), lambda: self.list.editItem(item, 0))
             menu.addAction(tr("Move to root"), self._on_move_to_root)
-            menu.addAction(tr("Delete"), self._on_delete)
+            delete_action = menu.addAction(tr("Delete"), self._on_delete)
+            delete_action.setToolTip(tr("Delete selected scenes or folders; folder contents are kept"))
         menu.exec(self.list.viewport().mapToGlobal(point))
 
     def _on_move_to_root(self):

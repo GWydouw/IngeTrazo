@@ -458,3 +458,24 @@ def test_folders_before_layers_sorted_by_name_at_every_level(panel):
     assert [tree.topLevelItem(i).text(0) for i in range(3, 5)] == ['0 layer', 'A layer']
     assert tree.currentItem().text(0) == '0 layer'
     assert {i.text(0) for i in tree.selectedItems()} == {'0 layer', 'A layer'}
+
+
+def test_toolbar_expansion_actions_persist_folder_state(panel, tmp_path):
+    scene, root, child, _ = populate(panel)
+    actions = {action.text(): action for action in panel._actions_menu.actions()}
+    actions['Collapse All'].trigger()
+    assert not root.expanded and not child.expanded
+    assert not panel.tree.topLevelItem(1).isExpanded()
+    path = tmp_path / 'collapsed.igz'
+    save_scene(scene, path)
+    loaded = Scene()
+    load_into(loaded, path)
+    assert all(not folder.expanded for folder in loaded.layer_folders)
+    actions['Expand All'].trigger()
+    assert root.expanded and child.expanded
+    assert panel.tree.topLevelItem(1).isExpanded()
+    assert panel.tree.topLevelItem(1).child(0).isExpanded()
+    panel._color_by_layer.click()
+    assert scene.display_style.color_by_layer
+    panel.refresh()
+    assert panel._color_by_layer.isChecked()

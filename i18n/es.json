@@ -1,4 +1,8 @@
 {
+ "Expand All": "Expandir todo",
+ "Collapse All": "Contraer todo",
+ "Filter scenes": "Filtrar escenas",
+ "More options": "Más opciones",
  "Active layer": "Capa activa",
  "Set active layer": "Establecer capa activa",
  "Add a terrain profile along a traced path (two clicks or drag)": "Añadir un perfil de terreno a lo largo de un trazado (dos clics o arrastre)",
