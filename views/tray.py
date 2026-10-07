@@ -2974,7 +2974,7 @@ class EntityInfoPanel(QWidget):
         self._updating = False
         self._named = None
         self.setObjectName("entityInfo")
-        self.setMinimumWidth(260)
+        self.setMinimumWidth(240)
         self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(10, 8, 10, 10)
