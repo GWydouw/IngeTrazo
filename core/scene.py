@@ -76,6 +76,7 @@ class Scene:
     saved_views: list = field(default_factory=list)
     scene_folders: list = field(default_factory=list)
     layer_folders: list = field(default_factory=list)
+    active_layer: str = "Layer 0"
     # Sheet compositions (core.composition.Composicion) — the print layouts.
     compositions: list = field(default_factory=list)
     # Scales (1:N) typed by the user in the composer beyond the common
@@ -631,6 +632,7 @@ class Scene:
             self.selection.clear()
             from core.layers import DEFAULT_LAYER, Layer
             self.layers = [Layer(DEFAULT_LAYER)]
+            self.active_layer = DEFAULT_LAYER
             self.georef = None
             self.tile_layer = None
             self.terrain = None

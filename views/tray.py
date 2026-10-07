@@ -3644,17 +3644,18 @@ class LayersPanel(QWidget):
         self.tree.itemCollapsed.connect(self._on_expansion)
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._on_context_menu)
-        self.tree.setColumnCount(8)
+        self.tree.setColumnCount(9)
         self.tree.setHeaderLabels([tr("Name"), "", "", "",
-                                  tr("Line"), "", "", "%"])
+                                  tr("Line"), "", "", "%", ""])
         self.tree.setRootIsDecorated(True)
         self.tree.header().setStretchLastSection(False)
         self.tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
         self.tree.header().setMinimumSectionSize(24)
-        for column, width in ((1, 24), (2, 24), (3, 24), (4, 48), (5, 0), (6, 24), (7, 38)):
+        for column, width in ((1, 24), (2, 24), (3, 24), (4, 48), (5, 0), (6, 24), (7, 38), (8, 24)):
             self.tree.header().setSectionResizeMode(column, QHeaderView.Fixed)
             self.tree.setColumnWidth(column, width)
         self.tree.header().moveSection(self.tree.header().visualIndex(1), 0)
+        self.tree.headerItem().setToolTip(8, tr("Active layer"))
         self.tree.setTreePosition(0)  # Keep indentation and folder arrows with the name.
         self.tree.setColumnHidden(5, True)  # Legacy style data; displayed together in column 4.
         for column, label in ((1, "Visible"), (2, "Lock"), (3, "Color"), (4, "Line appearance"), (6, "Tint"), (7, "Transparency")):
@@ -3682,6 +3683,7 @@ class LayersPanel(QWidget):
         header.customContextMenuRequested.connect(
             lambda point: self._columns_menu.exec(header.mapToGlobal(point)))
         self.tree.itemChanged.connect(self._on_item_changed)
+        self.tree.itemClicked.connect(self._on_active_layer_clicked)
         self.tree.itemDoubleClicked.connect(self._on_color_clicked)
         lay.addWidget(self.tree)
         self._resize_handle = _VerticalResizeHandle(self.tree, self._set_height)
@@ -3750,6 +3752,8 @@ class LayersPanel(QWidget):
         self.tree.clear()
         scene = self._scene()
         self._color_by_layer.setChecked(scene.display_style.color_by_layer)
+        if scene.layer(scene.active_layer) is None:
+            scene.active_layer = DEFAULT_LAYER
         folders = {f.uid: f for f in scene.layer_folders}
         items = {}
         for folder in scene.layer_folders:
@@ -3768,6 +3772,10 @@ class LayersPanel(QWidget):
             items.get(parent_id, self.tree.invisibleRootItem()).addChild(items[folder.uid])
         for ly in scene.layers:
             item = QTreeWidgetItem([ly.name, "", ""])
+            item.setToolTip(8, tr("Set active layer"))
+            if ly.name == scene.active_layer:
+                item.setIcon(8, QIcon(str(Path(__file__).resolve().parent.parent
+                                       / "resources/icons/active_layer.svg")))
             item.setData(3, Qt.UserRole + 2, QColor.fromRgbF(
                 *ly.color, scene.layer_opacity(ly.name)))
             item.setToolTip(3, tr("Double-click to change layer color"))
@@ -3950,7 +3958,12 @@ class LayersPanel(QWidget):
 
     def _on_add_folder(self):
         from core.layers import LayerFolder
-        parent_item, selected = self.tree.folder_selection()
+        current = self.tree.currentItem()
+        if (current is not None and current.isSelected()
+                and isinstance(self._item_value(current), LayerFolder)):
+            parent_item, selected = current, []
+        else:
+            parent_item, selected = self.tree.folder_selection()
         parent = self._item_value(parent_item) if parent_item else None
         names = {f.name for f in self._scene().layer_folders}
         base, n = tr("Folder"), 1
@@ -4053,6 +4066,9 @@ class LayersPanel(QWidget):
         menu.addAction(tr("New folder"), self._on_add_folder)
         if item is not None:
             menu.addAction(tr("Edit appearance…"), self._on_edit_appearance)
+            if self._scene().layer(self._item_value(item)) is not None:
+                menu.addAction(tr("Set active layer"),
+                               lambda: self._on_active_layer_clicked(item, 8))
         if item is not None and self._item_value(item) != DEFAULT_LAYER:
             menu.addAction(tr("Rename"), lambda: self.tree.editItem(item, 0))
         if any(self._item_value(row) != DEFAULT_LAYER for row in self.tree.selectedItems()):
@@ -4066,6 +4082,15 @@ class LayersPanel(QWidget):
         self._scene().display_style.color_by_layer = enabled
         self.refresh()
         self._window.viewport.update()
+
+    def _on_active_layer_clicked(self, item, column):
+        if self._updating:
+            return
+        name = self._item_value(item)
+        if column == 8 and self._scene().layer(name) is not None:
+            self._scene().active_layer = name
+            self.refresh()
+            self._touch()
 
     def _on_color_clicked(self, item, column):
         if item.data(column, Qt.UserRole + 4):
@@ -4175,6 +4200,8 @@ class LayersPanel(QWidget):
         from core.layers import layer_of, assign_layer
         scene = self._scene()
         ly.name = new_name
+        if scene.active_layer == old_name:
+            scene.active_layer = new_name
         from core.purge import iter_groups, iter_meshes
         for mesh in iter_meshes(scene):
             for ent in list(mesh.faces) + list(mesh.edges):

@@ -341,6 +341,7 @@ def save_scene(scene, path: Path) -> dict:
         if protos:
             payload["protos"] = protos
     layers = getattr(scene, "layers", None)
+    payload["active_layer"] = getattr(scene, "active_layer", "Layer 0")
     from core.layers import default_layer_color
     if layers is not None and (len(layers) > 1 or any(
             not ly.visible or ly.locked or ly.edge_color is not None
@@ -698,6 +699,9 @@ def _load_into_inner(scene, path: Path, progress=None) -> None:
         scene.layers = [Layer.from_dict(r) for r in raw_layers]
         if not any(ly.name == DEFAULT_LAYER for ly in scene.layers):
             scene.layers.insert(0, Layer(DEFAULT_LAYER))
+    scene.active_layer = payload.get("active_layer", "Layer 0")
+    if scene.layer(scene.active_layer) is None:
+        scene.active_layer = "Layer 0"
     raw_tiles = payload.get("tile_layer")
     if raw_tiles:
         from georef.tiles import TileLayer

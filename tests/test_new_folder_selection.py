@@ -80,11 +80,17 @@ def test_group_folder_and_selected_descendant_without_cycles(setup):
         item_named(tree, name).setSelected(True)
     panel._on_add_folder()
     new = folders[-1]
-    assert new.parent_id is None
-    assert root.parent_id == new.uid
+    if isinstance(panel, LayersPanel):
+        assert new.parent_id == root.uid
+        assert root.parent_id is None
+        assert b.folder_id is None
+        assert tree.currentItem().childCount() == 0
+    else:
+        assert new.parent_id is None
+        assert root.parent_id == new.uid
+        assert b.folder_id == new.uid
     assert child.parent_id == root.uid
     assert a.folder_id == child.uid
-    assert b.folder_id == new.uid
 
 
 def test_group_rows_from_different_folders_at_common_parent(setup):
@@ -128,5 +134,24 @@ def test_default_layer_stays_at_root_when_grouping():
         assert scene.layer(DEFAULT_LAYER).folder_id is None
         assert scene.layer('A').folder_id == scene.layer_folders[-1].uid
         assert item_named(panel.tree, DEFAULT_LAYER).parent() is None
+    finally:
+        panel.close()
+
+
+def test_selected_layer_moves_to_subfolder_without_its_siblings():
+    scene = Scene()
+    parent = LayerFolder('Parent')
+    scene.layer_folders.append(parent)
+    scene.layers += [Layer('Move', folder_id=parent.uid),
+                     Layer('Keep', folder_id=parent.uid)]
+    panel = LayersPanel(SimpleNamespace(viewport=SimpleNamespace(scene=scene, update=lambda: None)))
+    try:
+        panel.tree.setCurrentItem(item_named(panel.tree, 'Move'))
+        panel._on_add_folder()
+        new = scene.layer_folders[-1]
+        assert new.parent_id == parent.uid
+        assert scene.layer('Move').folder_id == new.uid
+        assert scene.layer('Keep').folder_id == parent.uid
+        assert parent.parent_id is None
     finally:
         panel.close()
