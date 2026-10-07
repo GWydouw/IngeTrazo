@@ -113,6 +113,69 @@ def test_legacy_scene_list_preserves_order(panel):
     assert [panel.list.topLevelItem(i).text(0) for i in range(3)] == ["B", "A", "C"]
 
 
+def test_filter_finds_nested_scenes_and_restores_folder_state(panel):
+    scene, root, child = populate(panel)
+    root.expanded = False
+    panel.refresh()
+    version = scene.version
+    panel.filter_input.setText(" pLaN ")
+    root_item = panel.list.topLevelItem(0)
+    assert root_item.isExpanded()
+    assert not root_item.child(0).child(0).isHidden()
+    assert panel.list.topLevelItem(1).isHidden()
+    assert not root.expanded
+    assert scene.version == version
+    assert not panel.list.dragEnabled()
+    assert not panel.list.acceptDrops()
+    panel.refresh()
+    assert panel.list.topLevelItem(1).isHidden()
+    panel.filter_input.clear()
+    assert not panel.list.topLevelItem(0).isExpanded()
+    assert not panel.list.topLevelItem(1).isHidden()
+    assert panel.list.dragEnabled()
+    assert panel.list.acceptDrops()
+
+
+def test_filter_matching_folder_shows_its_contents(panel):
+    populate(panel)
+    panel.filter_input.setText("Ground")
+    root = panel.list.topLevelItem(0)
+    assert not root.isHidden()
+    assert not root.child(0).isHidden()
+    assert not root.child(0).child(0).isHidden()
+    assert panel.list.topLevelItem(1).isHidden()
+    panel.filter_input.setText("missing")
+    assert root.isHidden()
+
+
+def test_scene_context_menu_updates_and_deletes(panel, monkeypatch):
+    from PySide6.QtWidgets import QApplication, QMenu, QPushButton
+    scene, root, child = populate(panel)
+    panel.show()
+    QApplication.processEvents()
+    captured = []
+    def capture_menu(parent):
+        menu = QMenu(parent)
+        menu.exec = lambda point: captured.append(menu)
+        return menu
+    monkeypatch.setattr("views.tray.QMenu", capture_menu)
+    item = panel.list.topLevelItem(1)
+    panel._on_context_menu(panel.list.visualItemRect(item).center())
+    actions = {action.text(): action for action in captured[-1].actions()}
+    assert "Update" in actions and "Delete" in actions
+    updated = []
+    monkeypatch.setattr(scene.saved_views[1], "recapture", lambda *args: updated.append(True))
+    panel._window.statusBar = lambda: SimpleNamespace(showMessage=lambda *args: None)
+    actions["Update"].trigger()
+    assert updated == [True]
+    actions["Delete"].trigger()
+    assert [view.name for view in scene.saved_views] == ["Plan"]
+    panel._on_context_menu(panel.list.visualItemRect(panel.list.topLevelItem(0)).center())
+    names = [action.text() for action in captured[-1].actions()]
+    assert "Delete" in names and "Update" not in names
+    assert not panel.findChildren(QPushButton)
+
+
 def test_folder_icon_click_toggles_expansion_and_preserves_state(panel):
     from PySide6.QtCore import QPoint
     from PySide6.QtTest import QTest

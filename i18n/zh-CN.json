@@ -1,4 +1,9 @@
 {
+ "Surface": "表面",
+ "Solid tools behavior:": "实体工具行为：",
+ "Surface keeps materials per face, including the cutter's material on cuts. Solid keeps the target's name, tag, material and object properties; new cut faces inherit its material. Both modes require closed solids.": "表面模式保留各个面的材质，包括切割面上的切割实体材质。实体模式保留目标对象的名称、标签、材质和对象属性；新切割面继承目标对象的材质。两种模式都要求封闭实体。",
+ "Active layer": "当前图层",
+ "Set active layer": "设为当前图层",
  "Add a terrain profile along a traced path (two clicks or drag)": "沿着已绘制路径添加地形剖面（两次点击或拖动）",
  "Guide point": "参考点",
  "IngeTrazo could not read {name} with its built-in .skp reader.\n\nOpen it in the program it came from and export it as COLLADA (.dae) or OBJ, then import that file here.": "IngeTrazo 无法用内置的 .skp 读取器读取 {name}。\n\n请在原来的程序中打开它并导出为 COLLADA (.dae) 或 OBJ，然后在这里导入该文件。",

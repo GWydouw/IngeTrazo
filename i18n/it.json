@@ -1,4 +1,9 @@
 {
+ "Surface": "Superficie",
+ "Solid tools behavior:": "Comportamento degli strumenti solidi:",
+ "Surface keeps materials per face, including the cutter's material on cuts. Solid keeps the target's name, tag, material and object properties; new cut faces inherit its material. Both modes require closed solids.": "Superficie mantiene i materiali per faccia, incluso il materiale del solido di taglio sui tagli. Solido mantiene il nome, il tag, il materiale e le proprietà dell’oggetto di destinazione; le nuove facce di taglio ne ereditano il materiale. Entrambe le modalità richiedono solidi chiusi.",
+ "Active layer": "Livello attivo",
+ "Set active layer": "Imposta livello attivo",
  "Add a terrain profile along a traced path (two clicks or drag)": "Aggiungi un profilo del terreno lungo un tracciato (due clic o trascinamento)",
  "Guide point": "Punto guida",
  "IngeTrazo could not read {name} with its built-in .skp reader.\n\nOpen it in the program it came from and export it as COLLADA (.dae) or OBJ, then import that file here.": "IngeTrazo non è riuscito a leggere {name} con il suo lettore .skp integrato.\n\nAprilo nel programma di origine ed esportalo come COLLADA (.dae) o OBJ, poi importa qui quel file.",

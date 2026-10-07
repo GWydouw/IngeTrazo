@@ -120,8 +120,10 @@ def test_add_and_collapse(panel):
     assert not tree.topLevelItem(1).isExpanded()
     tree.setCurrentItem(tree.topLevelItem(1))
     panel._on_add_folder()
-    assert scene.layer_folders[-1].parent_id is None
-    assert root.parent_id == scene.layer_folders[-1].uid
+    assert scene.layer_folders[-1].parent_id == root.uid
+    assert root.parent_id is None
+    assert child.parent_id == root.uid
+    assert layer.folder_id == child.uid
 
 
 def test_alphabetical_order_and_invalid_parents(panel):

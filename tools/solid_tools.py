@@ -148,7 +148,8 @@ class SolidTool(Tool):
         return self._cache[key]
 
     def _execute(self, viewport, groups) -> list:
-        cmd = solids.SolidOperationCommand(self.op, groups)
+        cmd = solids.SolidOperationCommand(
+            self.op, groups, mode=solids.operation_mode())
         try:
             cmd.prepare()
         except solids.SolidError as err:

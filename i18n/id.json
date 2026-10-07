@@ -1,4 +1,9 @@
 {
+ "Surface": "Permukaan",
+ "Solid tools behavior:": "Perilaku alat solid:",
+ "Surface keeps materials per face, including the cutter's material on cuts. Solid keeps the target's name, tag, material and object properties; new cut faces inherit its material. Both modes require closed solids.": "Permukaan mempertahankan material per bidang, termasuk material pemotong pada potongan. Solid mempertahankan nama, tag, material dan properti objek target; bidang potongan baru mewarisi materialnya. Kedua mode memerlukan solid tertutup.",
+ "Active layer": "Lapisan aktif",
+ "Set active layer": "Tetapkan lapisan aktif",
  "Add a terrain profile along a traced path (two clicks or drag)": "Tambahkan profil medan sepanjang jalur yang digambar (dua klik atau seret)",
  "Guide point": "Titik bantu",
  "IngeTrazo could not read {name} with its built-in .skp reader.\n\nOpen it in the program it came from and export it as COLLADA (.dae) or OBJ, then import that file here.": "IngeTrazo tidak dapat membaca {name} dengan pembaca .skp bawaannya.\n\nBuka di program asalnya lalu ekspor sebagai COLLADA (.dae) atau OBJ, kemudian impor file tersebut di sini.",

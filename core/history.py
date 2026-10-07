@@ -161,6 +161,12 @@ class History:
         self.last_error: Optional[str] = None
 
     def execute(self, cmd: Command) -> None:
+        # Reject the entire batch BEFORE any child mutates the document.
+        # Keep selection so Entity Info can unlock the protected object.
+        if self._edits_locked_group(cmd):
+            from core.i18n import tr
+            self.last_error = tr("Object is locked")
+            return
         _t0 = _time_mod.perf_counter() if _PERF else 0.0
         snapshot = self.scene.mesh.capture_state()
         if _PERF:
@@ -168,7 +174,7 @@ class History:
                   (_time_mod.perf_counter() - _t0) * 1000.0,
                   extra=type(cmd).__name__)
         try:
-            cmd.do(self.scene)
+            self._do_with_active_layer(cmd)
         except Exception as exc:
             self.scene.mesh.restore_state(snapshot)
             self.scene.selection.clear()
@@ -190,6 +196,25 @@ class History:
             del self.undo_stack[:len(self.undo_stack) - cap]
         self.redo_stack.clear()
         self._rebind_dimensions()
+
+    def _edits_locked_group(self, cmd) -> bool:
+        if isinstance(cmd, (SetLockedCommand, HideCommand, AssignLayerCommand,
+                            RenameGroupCommand, InsertGroupCommand)):
+            return False
+        if isinstance(cmd, CompoundCommand):
+            return any(self._edits_locked_group(child) for child in cmd.commands)
+        if isinstance(cmd, (SnapshotCompound, MeshSnapshotCommand)):
+            return any(self._edits_locked_group(child) for child in cmd.inner)
+        if (self.scene.edit_group is not None
+                and self.scene.group_locked(self.scene.edit_group)):
+            return True
+        # Group-edit commands (including plugins' solid operations) expose
+        # their targets through these existing command attributes.
+        groups = [getattr(cmd, key, None) for key in ("group", "container")]
+        for key in ("groups", "_groups"):
+            groups.extend(getattr(cmd, key, ()) or ())
+        return any(isinstance(group, Group) and self.scene.group_locked(group)
+                   for group in groups)
 
     def _rebind_dimensions(self) -> None:
         """After every command, undo and redo: a dimension whose vertex
@@ -238,10 +263,66 @@ class History:
         if not self.redo_stack:
             return False
         cmd = self.redo_stack.pop()
-        self._in_command_mesh(cmd, lambda: cmd.do(self.scene))
+        self._in_command_mesh(cmd, lambda: self._do_with_active_layer(cmd))
         self.undo_stack.append(cmd)
         self._rebind_dimensions()
         return True
+
+    def _do_with_active_layer(self, cmd):
+        """Tag newly created, untagged entities; keep edits and imported tags.
+
+        Store the chosen layer on the command so redo is independent of the
+        current UI choice. Snapshot commands restore their own result before
+        this pass, so they receive the same tags on every redo.
+        """
+        from core.layers import DEFAULT_LAYER, assign_layer, layer_of
+
+        def creates(command):
+            if isinstance(command, CompoundCommand):
+                return any(creates(child) for child in command.commands)
+            if isinstance(command, (SnapshotCompound, MeshSnapshotCommand)):
+                return any(creates(child) for child in command.inner)
+            return isinstance(command, (
+                AddEdgeCommand, AddFaceCommand, AddDimensionCommand,
+                AddTextLabelCommand, PlaceSectionPlaneCommand,
+                AddImagePlaneCommand,
+                InsertGroupCommand, MakeGroupCommand, MakeNestedGroupCommand,
+                MakeComponentOfCommand,
+                SnapshotImport, SnapshotMutation))
+
+        if not hasattr(cmd, "_creation_layer"):
+            name = self.scene.active_layer
+            cmd._creation_layer = (self.scene.layer(name)
+                                   if name != DEFAULT_LAYER and creates(cmd) else None)
+            cmd._creation_layer_name = name
+        layer = cmd._creation_layer
+        if layer is None:
+            cmd.do(self.scene)
+            return
+        name = layer.name if layer in self.scene.layers else DEFAULT_LAYER
+
+        def entities():
+            scene = self.scene
+            mesh = (cmd._target(scene) if isinstance(cmd, SnapshotMutation)
+                    else scene.mesh)
+            yield from mesh.edges
+            yield from mesh.faces
+            yield from scene.groups
+            if scene.edit_group is not None:
+                yield from scene.edit_group.children
+            for collection in (scene.dimensions, scene.text_labels,
+                               scene.image_planes, scene.section_planes):
+                yield from collection
+
+        before = {id(entity) for entity in entities()}
+        cmd.do(self.scene)
+        # Follow renames and fall back to the default after deletion, including
+        # objects relinked by redo that still carry their original layer name.
+        for entity in entities():
+            if id(entity) not in before and layer_of(entity) in (
+                    DEFAULT_LAYER, cmd._creation_layer_name):
+                assign_layer(entity, name)
+        cmd._creation_layer_name = name
 
     def _in_command_mesh(self, cmd, fn) -> None:
         """Run ``fn`` with ``scene.mesh`` pointing at the mesh the command was
@@ -767,6 +848,27 @@ def _set_hidden(entity, hidden: bool) -> None:
             attrs.pop("hidden", None)
     else:
         entity.hidden = hidden
+
+
+class SetLockedCommand(Command):
+    """Set object locks as one undo step; mixed selections lock together."""
+
+    def __init__(self, entities, locked: bool) -> None:
+        self.entities = list(entities)
+        self.locked = bool(locked)
+        self._before = None
+
+    def do(self, scene) -> None:
+        if self._before is None:
+            self._before = [entity.locked for entity in self.entities]
+        for entity in self.entities:
+            entity.locked = self.locked
+        scene.version += 1
+
+    def undo(self, scene) -> None:
+        for entity, locked in zip(self.entities, self._before):
+            entity.locked = locked
+        scene.version += 1
 
 
 class HideCommand(Command):

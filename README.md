@@ -107,6 +107,13 @@ welcome arch with all its rebar (also attached to every release as
   to, Push/Pull included (stop a face exactly at a guide's height).
 - **Eraser, Hide/Unhide, Invert Selection, Intersect Faces.**
 - **Solid tools** — Outer Shell, Union, Subtract, Trim, Intersect, Split.
+  Preferences ▸ General ▸ Solid tools behavior offers **Surface** (the default,
+  preserving face materials, with the cutter's paint on new cuts) and **Solid**
+  (preserving the target's name, tag, container material and BIM/extension
+  properties, with new cut faces inheriting its material). Subtract and Trim
+  use the second clicked object as the target; the other operations use the
+  first. Both modes require closed solids. The choice applies to the next
+  operation; Undo/Redo retains the mode used for that operation.
 - **Section planes** — live cuts with section fill.
 - **Groups & components** — isolate geometry, move / explode / edit as a
   unit, and **copy/paste** with a solid, textured preview under the cursor;

@@ -192,6 +192,62 @@ is logged once and removed, never breaking the frame or the cursor; the
 painter state is saved and restored around every overlay; document data
 that is not JSON-safe is dropped on save rather than failing it.
 
+### Transient 3D layers
+
+`app.add_overlay_3d(name="default")` returns a retained 3D layer owned by
+the extension. Calling it again with the same name returns the same handle;
+another extension can use that name independently. Unlike `add_overlay`,
+this geometry is rendered by OpenGL in world coordinates (metres), with
+perspective and model occlusion, regardless of the active tool.
+
+```python
+def setup(app):
+    hatch = app.add_overlay_3d("surface-hatch")
+    hatch.configure(color=(0.15, 0.15, 0.15, 1.0), depth_bias=1e-5)
+
+    def refresh():
+        # A demonstration hatch over the world XY square [0, 1] × [0, 1].
+        # Real surface hatches must clip to face contours, including holes,
+        # and transform their local coordinates into world coordinates.
+        lines = []
+        for i in range(1, 20):
+            c = i * 0.1
+            a, b = max(0.0, c - 1.0), min(1.0, c)
+            lines.append([[a, c - a, 0.0], [b, c - b, 0.0]])
+        hatch.set_geometry(lines=lines)
+
+    app.on_document_changed(refresh)
+    refresh()
+```
+
+- `set_geometry(lines=..., triangles=...)` copies arrays shaped `(N, 2, 3)`
+  and `(N, 3, 3)`. Both primitive sets are replaced; omitted sets clear.
+  Invalid shapes or non-finite coordinates are rejected before any change.
+  Triangulation and pattern clipping belong to the extension.
+- `configure(color=RGB_or_RGBA, depth_test=True, depth_bias=0.0,
+  section_clip=True)` changes appearance without uploading geometry again.
+  Colours use floats from 0 to 1; separate layers can carry different colours.
+  A small positive bias pulls the drawing towards the camera to avoid
+  coincident-surface flicker; this is normalized clip depth, not metres.
+- `layer.visible = False`, `layer.clear()` and `layer.remove()` hide, empty
+  and unregister a layer respectively. Removed handles cannot be reused.
+  GPU resources are uploaded only on geometry changes and freed after
+  removal/clearing at the next paint or on GL context teardown.
+- Geometry is outside the scene: it is not saved to `.igz`, does not dirty
+  the file, and does not enter undo, geometry export, selection or snapping.
+  New/Open and workspace switches clear geometry but keep handles and style.
+  Use `on_document_changed` to regenerate geometry derived from the model.
+- Layers are drawn after the model, with depth testing but without depth
+  writes, so they do not affect model depth picking. Overlapping overlay
+  triangles do not hide each other through their own depth; alpha blends
+  in registration order. This API is for annotations, hatches and previews,
+  not a replacement for the model's solid renderer. Lines use GL hairlines;
+  textures, lighting and shadows are not provided by this first API.
+- Raster view exports include these layers. The composer's vector drawing
+  route does not; vector hatch output still needs its own 2D drawing route.
+  All layer mutations must run on the GUI thread.
+
+
 ### Where your interface goes
 
 The side tray is one place, not the only one. Pick by how the user works

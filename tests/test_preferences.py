@@ -95,10 +95,27 @@ def test_cancel_touches_nothing(settings_file):
     win = _Win()
     dlg = PreferencesDialog(win)
     dlg._obj_unit.setCurrentIndex(dlg._obj_unit.findData("ft"))
+    dlg._solid_mode.setCurrentIndex(dlg._solid_mode.findData("solid"))
     dlg.reject()
     st = _fresh(settings_file)
     assert st.value("import/obj_unit") is None      # never written
+    assert st.value("solids/mode") is None
     assert win.viewport.edit_rest_mode == "fade"
+
+
+def test_solid_behavior_is_saved_and_reloaded(settings_file):
+    from core.solids import operation_mode
+    win = _Win()
+    dlg = PreferencesDialog(win)
+    assert dlg._solid_mode.currentData() == "surface"
+    dlg._solid_mode.setCurrentIndex(dlg._solid_mode.findData("solid"))
+    dlg.accept()
+    st = _fresh(settings_file)
+    assert operation_mode(st) == "solid"
+    reopened = PreferencesDialog(win)
+    assert reopened._solid_mode.currentData() == "solid"
+    st.setValue("solids/mode", "invalid")
+    assert operation_mode(st) == "surface"
 
 
 def test_rest_mode_applies_through_the_viewport(settings_file):

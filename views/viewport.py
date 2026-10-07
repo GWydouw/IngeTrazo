@@ -897,6 +897,8 @@ class Viewport(QOpenGLWidget):
         self.last_snap: Optional[SnapResult] = None
         # Extensions' overlays and snap providers (views.extension_api).
         self._ext_overlays: list = []
+        self._ext_overlays_3d: dict = {}
+        self._ext_overlay_3d_buffers: dict = {}
         self._ext_snap_providers: list = []
         # Copy/paste clipboard: copied geometry (faces + edges as positions,
         # groups as snapshot copies) plus a reference corner so Paste can
@@ -2185,6 +2187,8 @@ class Viewport(QOpenGLWidget):
         self._set_section_clip(False)
         self._draw_section_cut_edges()   # ON the plane — drawn unclipped
 
+        self._draw_extension_overlays_3d(mvp)
+
         # Rubber band preview. Loose drawing tools float it on top (depth test
         # off, so it never z-fights with coincident axes). Push/Pull's solid
         # preview keeps depth testing on, so the forming box's back edges are
@@ -2653,6 +2657,7 @@ class Viewport(QOpenGLWidget):
                 # Hide on an object takes its whole subtree along, and a
                 # hidden child stays hidden inside a visible parent.
                 proxy.hidden = hidden or bool(child.hidden)
+                proxy.locked = self.scene.group_locked(group) or child.locked
                 proxy.material = getattr(child, "material", None)
                 if child is ctx:
                     # The group being edited, reached as a nested placement:
@@ -3667,6 +3672,8 @@ class Viewport(QOpenGLWidget):
         document also slowed down reopen after reopen (the garbage collector
         walking the dead ones). And a CPython id() reused by a new group
         could meet an old entry — the composer's lesson with frames."""
+        for overlay in self._ext_overlays_3d.values():
+            overlay.clear()
         draws = getattr(self, "_proto_draw", None)
         if draws and self.context() is not None:
             self.makeCurrent()                # GPU objects need the context
@@ -3726,6 +3733,9 @@ class Viewport(QOpenGLWidget):
         mid-session, e.g. on reparenting)."""
         self.makeCurrent()
         try:
+            for entry in self._ext_overlay_3d_buffers.values():
+                self._destroy_proto_draw_entry(entry)
+            self._ext_overlay_3d_buffers.clear()
             cache = getattr(self, "_tex_cache", None)
             if cache:
                 for tex in cache.values():
@@ -8000,6 +8010,77 @@ class Viewport(QOpenGLWidget):
             return None
         return [(x0 + dx * t0, y0 + dy * t0), (x0 + dx * t1, y0 + dy * t1)]
 
+    def _draw_extension_overlays_3d(self, mvp) -> None:
+        """Retained extension buffers, drawn against model depth, without writes.
+
+        Called after model geometry and before tool rubber bands. No plugin
+        callback executes inside paintGL; validation happens on submission.
+        """
+        layers = self._ext_overlays_3d
+        buffers = self._ext_overlay_3d_buffers
+        live = set(layers.values())
+        for overlay in list(buffers):
+            if overlay not in live or not (overlay._line_count or
+                                          overlay._triangle_count):
+                self._destroy_proto_draw_entry(buffers.pop(overlay))
+        if not layers:
+            return
+        try:
+            self._gl.glDepthMask(GL_FALSE)
+            self._program.setUniformValue(self._loc_use_tex, 0)
+            self._program.setUniformValue(self._loc_use_vcolor, 0)
+            self._program.setUniformValue(self._loc_stipple, 0)
+            self._program.setUniformValue1f(self._loc_opacity, 1.0)
+            self._program.setUniformValue1f(self._loc_shade, 1.0)
+            self._program.setUniformValue1f(self._loc_fade, 0.0)
+            for overlay in layers.values():
+                if not overlay.visible or not (overlay._line_count or
+                                               overlay._triangle_count):
+                    continue
+                entry = buffers.get(overlay)
+                if entry is None:
+                    vao, vbo = self._create_dynamic()
+                    entry = buffers[overlay] = {
+                        "geometry_vao": vao, "geometry_vbo": vbo,
+                        "revision": -1}
+                    # _create_dynamic releases the shader program.
+                    self._program.bind()
+                if entry["revision"] != overlay._revision:
+                    raw = overlay._triangles + overlay._lines
+                    vbo = entry["geometry_vbo"]
+                    vbo.bind()
+                    vbo.allocate(raw, len(raw))
+                    vbo.release()
+                    entry["revision"] = overlay._revision
+                if overlay._depth_test:
+                    self._gl.glEnable(GL_DEPTH_TEST)
+                else:
+                    self._gl.glDisable(GL_DEPTH_TEST)
+                self._set_section_clip(overlay._section_clip)
+                matrix = QMatrix4x4(mvp)
+                if overlay._depth_bias:
+                    matrix.setRow(2, matrix.row(2) -
+                                  matrix.row(3) * overlay._depth_bias)
+                self._program.setUniformValue(self._loc_mvp, matrix)
+                self._set_color(*overlay._color)
+                vao = entry["geometry_vao"]
+                vao.bind()
+                try:
+                    if overlay._triangle_count:
+                        self._gl.glDrawArrays(GL_TRIANGLES, 0,
+                                              overlay._triangle_count)
+                    if overlay._line_count:
+                        self._gl.glDrawArrays(GL_LINES, overlay._triangle_count,
+                                              overlay._line_count)
+                finally:
+                    vao.release()
+        finally:
+            self._program.setUniformValue(self._loc_mvp, mvp)
+            self._gl.glDepthMask(GL_TRUE)
+            self._gl.glEnable(GL_DEPTH_TEST)
+            self._set_section_clip(False)
+            self._set_color(1.0, 1.0, 1.0, 1.0)
+
     def _draw_extension_overlays(self, painter: QPainter) -> None:
         """Extensions' overlays (``ExtensionApp.add_overlay``): whatever the
         active tool, and never able to break the frame. Each call is fenced
@@ -11401,6 +11482,9 @@ class Viewport(QOpenGLWidget):
         component instance opens on a world copy of its definition; the
         session's commands are remembered so leaving can fold them into ONE
         undoable share-back."""
+        if self.scene.group_locked(group):
+            self.flash_status(tr("Object is locked"), 3000)
+            return
         parent = self.scene.edit_group
         in_definition = (parent is not None
                          and group in (getattr(parent, "children", None) or ())
@@ -11846,9 +11930,11 @@ class Viewport(QOpenGLWidget):
             # A command that failed was rolled back (History is
             # transactional) — surface it instead of failing silently.
             if self.history.last_error:
-                self.flash_status(
-                    tr("Operation failed and was undone: {err}",
-                       err=self.history.last_error), 8000)
+                message = (self.history.last_error
+                           if self.history.last_error == tr("Object is locked")
+                           else tr("Operation failed and was undone: {err}",
+                                   err=self.history.last_error))
+                self.flash_status(message, 8000)
             self._release_axis_lock_after_operation(committed=_drew)
             if _drew:
                 self._reassert_tool_cursor()

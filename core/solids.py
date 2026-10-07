@@ -9,12 +9,16 @@ classic rules:
   edge borders exactly two faces, no stray edges, no groups nested inside.
 * The result is always a **group** (a component instance used as input is
   replaced by a group; its definition and other instances do not change).
-* Every face keeps the material it had; the faces a cut creates take the
-  material of the solid that cut them. A container's paint is baked onto
+* In Surface mode (the default), every face keeps the material it had;
+  the faces a cut creates take the material of the solid that cut them.
+  A container's paint is baked onto
   the faces that wore it.
 * Subtract: the FIRST solid cuts the SECOND and disappears. Trim: the same,
   the cutter stays. Split: A−B, B−A and A∩B, three groups. Outer Shell:
   the union without anything inside (inner voids go too); Union keeps them.
+* Solid mode restores the target's object properties and container paint,
+  like Skalp Studio. Cut faces inherit that paint. Subtract/Trim retain the
+  second input's identity; the other tools retain the first input's identity.
 
 Deviation, on purpose: the result goes on the layer of the solid that
 receives the operation, not on the current layer (a habit of the classic
@@ -29,6 +33,8 @@ the seams of curved surfaces stay soft.
 """
 from __future__ import annotations
 
+import copy
+
 import numpy as np
 from PySide6.QtGui import QVector3D
 
@@ -39,6 +45,19 @@ from core.mesh import Mesh
 OUTER_SHELL, UNION, SUBTRACT, TRIM, INTERSECT, SPLIT = (
     "outer_shell", "union", "subtract", "trim", "intersect", "split")
 OPS = (OUTER_SHELL, UNION, SUBTRACT, TRIM, INTERSECT, SPLIT)
+
+SURFACE, SOLID = "surface", "solid"
+MODE_KEY = "solids/mode"
+
+
+def operation_mode(settings=None) -> str:
+    """Read the live preference; existing installations keep Surface behavior."""
+    if settings is None:
+        from PySide6.QtCore import QSettings
+        settings = QSettings()
+    mode = str(settings.value(MODE_KEY, SURFACE))
+    return mode if mode in (SURFACE, SOLID) else SURFACE
+
 
 #: The group names given to the results (translated where shown).
 RESULT_NAMES = {OUTER_SHELL: "Outer shell", UNION: "Union",
@@ -90,6 +109,8 @@ class _Sources:
 
     def __init__(self) -> None:
         self.attrs: list[dict] = []
+        self.raw_attrs: list[dict] = []
+        self.owners: list[Group] = []
         #: Pairs of source face ids joined by a soft edge (curved surfaces).
         self.soft_pairs: set[tuple[int, int]] = set()
 
@@ -119,6 +140,8 @@ def _to_manifold(group, sources: _Sources):
             continue
         fid = len(sources.attrs)
         face_id[id(f)] = fid
+        sources.raw_attrs.append(copy.deepcopy(dict(f.attrs or {})))
+        sources.owners.append(group)
         attrs = effective_attrs(dict(f.attrs or {}), paint)
         sources.attrs.append({k: (dict(v) if isinstance(v, dict) else v)
                               for k, v in attrs.items()})
@@ -277,7 +300,7 @@ def _need_solid(g) -> None:
         raise SolidError("not a solid")
 
 
-def run(op: str, groups: list) -> tuple[list, list]:
+def run(op: str, groups: list, mode: str = SURFACE) -> tuple[list, list]:
     """Run ``op`` on ``groups`` (in pick order: for Subtract and Trim the
     first is the cutter, the second the target). Returns
     ``(removed, created)`` — the groups to take out of the model and the
@@ -285,6 +308,8 @@ def run(op: str, groups: list) -> tuple[list, list]:
     import manifold3d as m3d
     if op not in OPS:
         raise ValueError(op)
+    if mode not in (SURFACE, SOLID):
+        raise ValueError(mode)
     if len(groups) < 2:
         raise SolidError("two solids")
     for g in groups:
@@ -294,12 +319,40 @@ def run(op: str, groups: list) -> tuple[list, list]:
     first, second = groups[0], groups[1]
     from core.i18n import tr
     name = tr(RESULT_NAMES[op])
+    identity = second if op in (SUBTRACT, TRIM) else first
+    identity_used = False
 
     def out(man, label, layer, drop_voids=False):
+        nonlocal identity_used
         loops = _loops_from(man, sources, drop_voids)
         if not loops:
             return None
-        return _group_from_loops(loops, sources, label, layer)
+        if mode == SOLID:
+            # Target faces retain their own paint and default faces inherit
+            # the restored container material. New cut faces do the same.
+            loops = [(pts, sources.raw_attrs[fid]
+                      if sources.owners[fid] is identity else
+                      (attrs if op in (UNION, OUTER_SHELL) else {}), fid)
+                     for pts, attrs, fid in loops]
+        result = _group_from_loops(loops, sources, label, layer)
+        if mode == SOLID:
+            from core.group import group_frame
+            result.name = identity.name
+            result.layer = identity.layer
+            result.material = copy.deepcopy(identity.material)
+            result.ifc = copy.deepcopy(identity.ifc)
+            result.ext = copy.deepcopy(identity.ext)
+            result.hidden = identity.hidden
+            frame = group_frame(identity)
+            if frame is not None:
+                from PySide6.QtGui import QMatrix4x4
+                result.axes = QMatrix4x4(frame)
+            # Split pieces need distinct ids; one retains the original id
+            # so saved scene visibility continues to refer to the result.
+            if not identity_used:
+                result.uid = identity.uid
+                identity_used = True
+        return result
 
     target_layer = getattr(second if op in (SUBTRACT, TRIM) else first,
                            "layer", None)
@@ -341,8 +394,9 @@ class SolidOperationCommand(Command):
     live in (the model, or the container being edited), the results take
     the place of the first input that left, and they end up selected."""
 
-    def __init__(self, op: str, groups: list) -> None:
+    def __init__(self, op: str, groups: list, mode: str = SURFACE) -> None:
         self.op = op
+        self.mode = mode
         self.groups = list(groups)
         self.removed: list | None = None
         self.created: list | None = None
@@ -354,7 +408,7 @@ class SolidOperationCommand(Command):
         """Run the boolean now, so a :class:`SolidError` reaches the caller
         (``History.execute`` swallows what ``do`` raises)."""
         if self.created is None:
-            self.removed, self.created = run(self.op, self.groups)
+            self.removed, self.created = run(self.op, self.groups, self.mode)
 
     def do(self, scene) -> None:
         from core.history import group_owner_list

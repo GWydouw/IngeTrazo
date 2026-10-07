@@ -20,6 +20,8 @@ opening an extension's own file type, and workspaces.
   change through :meth:`ExtensionApp.set_document_data` is one undo step.
 - **Overlays** draw with a ``QPainter`` over the finished frame, after the
   active tool's own; each call is wrapped in save/restore.
+- **3D layers** retain world-space lines and triangles outside the document;
+  they use model depth and are cleared at document boundaries.
 - **Snap providers** see the snap engine's answer and may return another
   :class:`core.snap.SnapResult` (with a ``label``) — but never over a named
   point (endpoint, midpoint, centre, intersection…), which the user aimed at.
@@ -217,6 +219,24 @@ class ExtensionApp:
         The painter state is saved and restored around each call."""
         self.viewport._ext_overlays.append(fn)
         self.viewport.update()
+
+    def add_overlay_3d(self, name="default"):
+        """Return a named :class:`views.overlay3d.Overlay3D` owned by this plugin.
+
+        Real world-space lines/triangles, depth-tested against the model,
+        whatever tool is active. Repeated calls reuse the layer. Geometry
+        never enters the scene or .igz; New/Open/workspace changes clear it.
+        Update it from ``on_document_changed`` if derived from model faces.
+        Raster image exports include it; composer vector drawing does not.
+        """
+        from views.overlay3d import Overlay3D
+        if not isinstance(name, str) or not name:
+            raise ValueError("a 3D overlay needs a non-empty name")
+        vp = self.viewport
+        key = (self.key, name)
+        if key not in vp._ext_overlays_3d:
+            vp._ext_overlays_3d[key] = Overlay3D(vp, key)
+        return vp._ext_overlays_3d[key]
 
     def world_to_pixels(self, points):
         """World points (metres; anything shaped ``(N, 3)``) → ``(px, py,

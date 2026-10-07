@@ -76,6 +76,7 @@ class Scene:
     saved_views: list = field(default_factory=list)
     scene_folders: list = field(default_factory=list)
     layer_folders: list = field(default_factory=list)
+    active_layer: str = "Layer 0"
     # Sheet compositions (core.composition.Composicion) — the print layouts.
     compositions: list = field(default_factory=list)
     # Scales (1:N) typed by the user in the composer beyond the common
@@ -287,6 +288,12 @@ class Scene:
             return False
         return self._layer_state(entity)[0]
 
+    def group_locked(self, group) -> bool:
+        """Object locks protect edits while leaving objects selectable."""
+        owner = getattr(group, "owner", None)
+        return bool(getattr(group, "locked", False)
+                    or getattr(owner, "locked", False))
+
     def entity_selectable(self, entity) -> bool:
         if self._object_hidden(entity) and not self.show_hidden_objects:
             return False
@@ -331,6 +338,8 @@ class Scene:
 
         Entering a component INSTANCE edits a world copy of its shared
         definition; leaving shares the edit back to every copy."""
+        if self.group_locked(group):
+            return
         anidando = (self.edit_group is not None
                     and group in (getattr(self.edit_group, "children", None) or ()))
         if self.edit_group is not None and not anidando:
@@ -631,6 +640,7 @@ class Scene:
             self.selection.clear()
             from core.layers import DEFAULT_LAYER, Layer
             self.layers = [Layer(DEFAULT_LAYER)]
+            self.active_layer = DEFAULT_LAYER
             self.georef = None
             self.tile_layer = None
             self.terrain = None

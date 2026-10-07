@@ -138,7 +138,8 @@ def test_disjoint_solids_are_refused():
         solids.run(solids.SUBTRACT, [a, b])
 
 
-def test_a_component_is_read_through_its_placement_and_left_alone():
+@pytest.mark.parametrize("mode", [solids.SURFACE, solids.SOLID])
+def test_a_component_is_read_through_its_placement_and_left_alone(mode):
     proto = _box(0, 0, 0, 2, 2, 2, RED).mesh
     inst = Group(proto, name="comp")
     xf = QMatrix4x4()
@@ -148,11 +149,14 @@ def test_a_component_is_read_through_its_placement_and_left_alone():
     twin.xform = QMatrix4x4()
     cutter = _box(11, 1, 1, 13, 3, 3, BLUE)
     faces_before = len(proto.faces)
-    _gone, (res,) = solids.run(solids.SUBTRACT, [cutter, inst])
+    _gone, (res,) = solids.run(solids.SUBTRACT, [cutter, inst], mode=mode)
     assert res.xform is None and res.mesh is not proto   # a group comes out
     assert len(proto.faces) == faces_before              # definition intact
     xs = [v.position.x() for v in res.mesh.vertices]
     assert min(xs) >= 10.0 - 1e-6                        # in world space
+    if mode == solids.SOLID:
+        assert res.axes == xf and res.axes is not xf
+        assert res.uid == inst.uid and res.uid != twin.uid
 
 
 def test_a_smooth_side_stays_smooth():
@@ -255,3 +259,74 @@ def test_union_runs_at_once_on_a_preselection():
     UnionTool().on_activate(vp)
     assert len(scene.groups) == 1
     assert math.isclose(solids.solid_volume(scene.groups[0]), 15.0, rel_tol=1e-6)
+
+
+@pytest.mark.parametrize("op", solids.OPS)
+def test_solid_mode_preserves_target_properties_and_closed_volumes(op):
+    a, b = _pair()
+    target = b if op in (solids.SUBTRACT, solids.TRIM) else a
+    target.layer = "Walls"
+    target.material = {"color": [0.4, 0.5, 0.6], "mat": "Concrete"}
+    target.ifc = {"class": "IfcWall"}
+    target.ext = {"plugin": {"value": [1]}}
+    _, made = solids.run(op, [a, b], mode=solids.SOLID)
+    for result in made:
+        assert solids.is_solid(result)
+        assert result.name == target.name
+        assert result.layer == target.layer
+        assert result.material == target.material
+        assert result.ifc == target.ifc
+        assert result.ext == target.ext
+        assert result.ext is not target.ext
+    assert made[0].uid == target.uid
+    assert len({g.uid for g in made}) == len(made)
+
+
+@pytest.mark.parametrize("paint", [None, {"color": BLUE, "mat": "Target"}])
+def test_solid_cuts_inherit_target_paint_and_keep_existing_face_paint(paint):
+    from core.materials import effective_attrs
+    a, b = _pair()
+    b.material = paint
+    for face in b.mesh.faces:
+        face.attrs.clear()
+    b.mesh.faces[1].attrs["color"] = BLUE
+    _, (result,) = solids.run(solids.SUBTRACT, [a, b], mode=solids.SOLID)
+    assert result.material == paint
+    assert sum(not f.attrs for f in result.mesh.faces) == 8
+    assert any(f.attrs.get("color") == BLUE for f in result.mesh.faces)
+    assert all(effective_attrs(f.attrs, result.material).get("color") != RED
+               for f in result.mesh.faces)
+    # Surface still gives the new cuts the cutter's paint.
+    _, (surface,) = solids.run(solids.SUBTRACT, [a, b], mode=solids.SURFACE)
+    assert sum(f.attrs.get("color") == RED for f in surface.mesh.faces) == 3
+
+
+def test_tool_reads_live_mode_and_redo_keeps_prepared_result():
+    from PySide6.QtCore import QSettings
+    from tools.solid_tools import SubtractTool
+    st = QSettings()
+    before = st.value(solids.MODE_KEY)
+    try:
+        st.setValue(solids.MODE_KEY, solids.SOLID)
+        a, b = _pair()
+        b.material = {"color": BLUE}
+        scene = Scene()
+        scene.groups += [a, b]
+        vp = _VP(scene, [a, b])
+        tool = SubtractTool()
+        tool.on_activate(vp)
+        _click(tool, vp)
+        _click(tool, vp)
+        result = scene.groups[0]
+        assert result.name == b.name and result.uid == b.uid
+        st.setValue(solids.MODE_KEY, solids.SURFACE)
+        vp.history.undo()
+        assert scene.groups == [a, b]
+        vp.history.redo()
+        assert scene.groups == [result]
+        assert result.material == b.material
+    finally:
+        if before is None:
+            st.remove(solids.MODE_KEY)
+        else:
+            st.setValue(solids.MODE_KEY, before)

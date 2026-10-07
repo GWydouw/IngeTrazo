@@ -108,6 +108,17 @@ class PreferencesDialog(QDialog):
             window.viewport.edit_rest_mode)))
         form.addRow(tr("Rest of model while editing:"), self._rest)
 
+        from core.solids import SOLID, SURFACE, operation_mode
+        self._solid_mode = QComboBox()
+        for key, label in ((SURFACE, "Surface"), (SOLID, "Solid")):
+            self._solid_mode.addItem(tr(label), key)
+        self._solid_mode.setCurrentIndex(self._solid_mode.findData(operation_mode(st)))
+        self._solid_mode.setToolTip(tr(
+            "Surface keeps materials per face, including the cutter's material on cuts. "
+            "Solid keeps the target's name, tag, material and object properties; "
+            "new cut faces inherit its material. Both modes require closed solids."))
+        form.addRow(tr("Solid tools behavior:"), self._solid_mode)
+
         row = QHBoxLayout()
         self._autosave = QCheckBox(tr("Auto-save every"))
         self._autosave.setChecked(str(st.value("general/autosave", "1"))
@@ -412,6 +423,8 @@ class PreferencesDialog(QDialog):
 
         st.setValue("general/autosave",
                     "1" if self._autosave.isChecked() else "0")
+        from core.solids import MODE_KEY
+        st.setValue(MODE_KEY, self._solid_mode.currentData())
         st.setValue("general/autosave_min", self._autosave_min.value())
         st.setValue("general/backup", "1" if self._backup.isChecked() else "0")
         st.setValue("section/ask_name",
