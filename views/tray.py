@@ -3023,22 +3023,31 @@ class EntityInfoPanel(QWidget):
         self._toggle_widget = QWidget()
         toggle_row = QHBoxLayout(self._toggle_widget)
         toggle_row.setContentsMargins(0, 0, 0, 0)
+        toggle_row.setSpacing(4)
         grid.addWidget(self._toggle_caption, 6, 0)
         grid.addWidget(self._toggle_widget, 6, 1)
         self._visible = QToolButton()
         self._visible.setIcon(QIcon(str(app_root() / "resources/icons/layer_visible.svg")))
         self._visible.setIconSize(QSize(24, 24))
-        self._visible.setFixedSize(32, 32)
+        self._visible.setFixedSize(26, 24)
         self._visible.setCheckable(True)
+        self._visible.setAccessibleName(tr("Visible"))
         self._visible.setToolTip(tr("Visible"))
         self._visible.clicked.connect(self._on_visibility_clicked)
         toggle_row.addWidget(self._visible)
+        self._locked = QToolButton()
+        self._locked.setIconSize(QSize(24, 24))
+        self._locked.setFixedSize(26, 24)
+        self._locked.setCheckable(True)
+        self._locked.setAccessibleName(tr("Locked"))
+        self._locked.clicked.connect(self._on_lock_clicked)
+        toggle_row.addWidget(self._locked)
         toggle_row.addStretch()
         theme_style(self, """
             QLineEdit, QComboBox {{ min-height: 24px; border: 1px solid palette(midlight);
                                   border-radius: 3px; padding: 0 5px; background: palette(base); }}
             QLineEdit#entityFact {{ background: palette(alternate-base); color: {muted}; }}
-            QToolButton {{ border: 1px solid palette(midlight); border-radius: 3px; }}
+            QToolButton {{ border: 1px solid palette(midlight); border-radius: 3px; padding: 0; }}
             QToolButton:checked {{ background: palette(base); border-color: palette(highlight); }}
         """)
         self.refresh()
@@ -3066,8 +3075,26 @@ class EntityInfoPanel(QWidget):
         targets = [e for e in sel if hasattr(e, "hidden") or hasattr(e, "attrs")]
         self._visible.setEnabled(bool(targets))
         self._visible.setChecked(bool(targets) and not any(_is_hidden(e) for e in targets))
-        self._toggle_caption.setVisible(bool(targets))
-        self._toggle_widget.setVisible(bool(targets))
+        from core import history
+        # The companion backend PR supplies undoable object locks.
+        lock_targets = ([e for e in sel if hasattr(e, "locked")]
+                        if hasattr(history, "SetLockedCommand") else [])
+        locked = bool(lock_targets) and all(e.locked for e in lock_targets)
+        self._locked.setEnabled(bool(lock_targets))
+        self._locked.setChecked(locked)
+        self._locked.setToolTip(tr("Unlock") if locked else tr("Lock"))
+        icon = "entity_locked.svg" if locked else "entity_unlocked.svg"
+        self._locked.setIcon(QIcon(str(app_root() / "resources/icons" / icon)))
+
+    def _on_lock_clicked(self, locked: bool) -> None:
+        from core import history
+        lock_command = getattr(history, "SetLockedCommand", None)
+        vp = self._window.viewport
+        targets = [e for e in vp.scene.selection if hasattr(e, "locked")]
+        if targets and lock_command is not None:
+            vp.history.execute(lock_command(targets, locked))
+            vp.update()
+        self.refresh()
 
     def _on_visibility_clicked(self, visible: bool) -> None:
         from core.history import HideCommand
