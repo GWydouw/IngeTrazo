@@ -10,6 +10,8 @@ colour, Move/Pan are the familiar crossed-arrows / open-hand, Push/Pull is a
 face with an extrude arrow, Orbit is a pair of curved arrows. Drawing them
 ourselves keeps the set consistent, theme-aware (ink follows the palette), tiny,
 and free of any third-party icon licence. No SVG files, no QtSvg, no assets.
+Face-mode cubes follow the user's SketchUp toolbar reference and are drawn
+as vector art so they scale with the rest of the toolbar.
 
 ``tool_icon(key)`` returns a :class:`QIcon` for a tool/nav key, or a null icon
 for an unknown key (the action keeps its text label).
@@ -1815,7 +1817,49 @@ def _assign_tag(p, ink):
     p.drawLine(15, 34, 5, 44)
 
 
+def _face_style(p, ink, mode):
+    """SketchUp-style face-mode cubes, drawn as vector art for HiDPI."""
+    blue = QColor("#074b79")
+    p.setPen(QPen(blue, 2.0, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+    top = [(8, 15), (27, 5), (40, 19), (21, 30)]
+    left = [(8, 15), (21, 30), (23, 43), (10, 29)]
+    right = [(21, 30), (40, 19), (40, 33), (23, 43)]
+
+    def polygon(points, color=None):
+        p.setBrush(QColor(color) if color else Qt.NoBrush)
+        p.drawPolygon(QPolygonF([QPointF(*point) for point in points]))
+
+    colors = {
+        "xray": ("#c5dce9", "#90b4cb", "#e0eaf0"),
+        "back_edges": ("#f8fafc", "#f8fafc", "#f8fafc"),
+        "wireframe": (None, None, None),
+        "hidden_line": ("#ffffff", "#ffffff", "#ffffff"),
+        "shaded": ("#009ed0", "#70979f", "#bbbba5"),
+        "textures": ("#bbc1ad", "#557f8e", "#b9b99e"),
+        "monochrome": ("#939e94", "#738b92", "#b1b6a5"),
+    }[mode]
+    for points, color in zip((top, left, right), colors):
+        polygon(points, color)
+    if mode in ("wireframe", "xray", "back_edges"):
+        p.setPen(QPen(blue, 1.7, Qt.DotLine if mode == "back_edges"
+                      else Qt.SolidLine, Qt.RoundCap))
+        for a, b in (((8, 15), (27, 19)), ((27, 5), (27, 19)),
+                     ((27, 19), (40, 33)), ((27, 19), (10, 29))):
+            p.drawLine(QPointF(*a), QPointF(*b))
+    elif mode == "shaded":
+        p.drawLine(QPointF(8, 15), QPointF(23, 43))
+        p.drawLine(QPointF(8, 15), QPointF(40, 19))
+    elif mode == "textures":
+        # The striped material swatch on the textured cube in the reference.
+        p.setPen(QPen(blue, 3.6, Qt.SolidLine, Qt.FlatCap))
+        for y in (27, 34):
+            p.drawLine(QPointF(23, y + 5), QPointF(38, y - 3))
+
+
 _DRAW = {
+    **{f"face_{mode}": (lambda p, ink, m=mode: _face_style(p, ink, m))
+       for mode in ("xray", "back_edges", "wireframe", "hidden_line",
+                    "shaded", "textures", "monochrome")},
     "add_tag": _add_tag,
     "add_tag_folder": _add_tag_folder,
     "color_by_tag": _tag_stack,

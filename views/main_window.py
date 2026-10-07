@@ -1116,7 +1116,9 @@ class MainWindow(QMainWindow):
         self._style_group = QActionGroup(self)
         self._style_actions: dict[str, QAction] = {}
         for preset in BUILTIN_STYLES:
-            act = QAction(tr(preset.name), self)
+            icon_key = f"face_{preset.face_mode}"
+            act = QAction(tool_icon(icon_key), tr(preset.name), self)
+            self._icon_actions.append((act, icon_key))
             act.setStatusTip(tr(_STYLE_TIPS.get(preset.name, "")))
             act.setCheckable(True)
             self._style_group.addAction(act)
@@ -1127,8 +1129,10 @@ class MainWindow(QMainWindow):
         # X-ray on and off with one key: a glance at what hides behind a
         # face, then back to the style you were in.
         self._style_before_xray = (None, None)
-        self._act_xray_toggle = QAction(tr("Toggle X-ray"), self)
-        self._act_xray_toggle.setShortcut(QKeySequence("Alt+X"))
+        self._act_xray_toggle = QAction(
+            tool_icon("face_xray"), tr("Toggle X-ray"), self)
+        self._icon_actions.append((self._act_xray_toggle, "face_xray"))
+        self._act_xray_toggle.setShortcut(QKeySequence("X"))
         self._act_xray_toggle.setStatusTip(tr(
             "Switch to X-ray, or back to the style you were in."))
         self._act_xray_toggle.triggered.connect(self._toggle_xray)
@@ -1156,6 +1160,7 @@ class MainWindow(QMainWindow):
         self._act_style_back_edges.toggled.connect(
             lambda on: self._set_style_field("back_edges", on))
         style_menu.addAction(self._act_style_back_edges)
+        self._build_face_styles_toolbar()
         self._sync_style_menu()
 
         # How the model outside a group reads while you edit it (the usual
@@ -2816,6 +2821,52 @@ class MainWindow(QMainWindow):
         self.viewport.update()
 
     # ---- Display styles ----------------------------------------------------
+    def _build_face_styles_toolbar(self) -> None:
+        tb = self._new_toolbar(tr("Face Styles"), "face_styles")
+        self.toolbars["face_styles"] = tb
+        self._face_mode_actions = {}
+        self._face_mode_group = QActionGroup(self)
+        for mode, label, preset in (
+                ("xray", "X-ray", "X-ray"),
+                ("wireframe", "Wireframe", "Wireframe"),
+                ("hidden_line", "Hidden line", "Hidden line"),
+                ("shaded", "Shaded", "Shaded"),
+                ("textures", "Shaded with textures", "Default"),
+                ("monochrome", "Monochrome", "Monochrome")):
+            key = f"face_{mode}"
+            act = QAction(tool_icon(key), tr(label), self)
+            if mode == "xray":
+                act.setToolTip(f"{tr(label)} (X)")
+            act.setStatusTip(tr(_STYLE_TIPS[preset]))
+            act.setCheckable(True)
+            self._face_mode_group.addAction(act)
+            act.triggered.connect(
+                lambda _checked=False, m=mode: self._set_face_mode(m))
+            self._face_mode_actions[mode] = act
+            self._icon_actions.append((act, key))
+            tb.addAction(act)
+            if mode == "xray":
+                tb.addSeparator()
+                self._act_style_back_edges.setIcon(tool_icon("face_back_edges"))
+                self._icon_actions.append(
+                    (self._act_style_back_edges, "face_back_edges"))
+                tb.addAction(self._act_style_back_edges)
+                tb.addSeparator()
+
+    def _set_face_mode(self, mode: str) -> None:
+        scene = self.viewport.scene
+        style = scene.display_style
+        if mode == "xray" and style.face_mode == "xray":
+            self._toggle_xray()
+            return
+        if mode == "xray":
+            self._style_before_xray = (scene, style.copy())
+        elif style.face_mode == "xray":
+            self._style_before_xray = (None, None)
+        style.face_mode = mode
+        self._sync_style_menu()
+        self.viewport.update()
+
     def _apply_display_style(self, preset) -> None:
         """Activate a built-in style (a COPY — presets stay pristine)."""
         self.viewport.scene.display_style = preset.copy()
@@ -2825,7 +2876,7 @@ class MainWindow(QMainWindow):
             tr("Style: {name}", name=tr(preset.name)), 2000)
 
     def _toggle_xray(self) -> None:
-        """Alt+X: into X-ray, remembering the style you leave; out of it,
+        """X: into X-ray, remembering the style you leave; out of it,
         back to that style — or to Default when there is none to go back to
         (X-ray picked from the menu, or another document since)."""
         from core.style import style_by_name
@@ -2847,6 +2898,7 @@ class MainWindow(QMainWindow):
         if style is None or getattr(style, name) == bool(value):
             return
         setattr(style, name, bool(value))
+        self._sync_style_menu()
         self.viewport.update()
 
     def _sync_style_menu(self) -> None:
@@ -2854,8 +2906,12 @@ class MainWindow(QMainWindow):
         style = getattr(self.viewport.scene, "display_style", None)
         if style is None:
             return
+        from core.style import BUILTIN_STYLES
+        modes = {preset.name: preset.face_mode for preset in BUILTIN_STYLES}
         for name, act in self._style_actions.items():
-            act.setChecked(name == style.name)
+            act.setChecked(name == style.name and modes[name] == style.face_mode)
+        for mode, act in getattr(self, "_face_mode_actions", {}).items():
+            act.setChecked(mode == style.face_mode)
         for act, value in ((self._act_style_edges, style.edges),
                            (self._act_style_profiles, style.profiles),
                            (getattr(self, "_act_style_back_edges", None),

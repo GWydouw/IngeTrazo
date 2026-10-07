@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Marco Sumari Tellez and IngeTrazo contributors.
-"""Text tool (X): place a leader-text annotation.
+"""Text tool (Shift+X): place a leader-text annotation.
 
 Two clicks: (1) the anchor on the model (snapped), (2) where the label
 floats — then type the text. The default text describes what was clicked:
@@ -20,7 +20,7 @@ from core.units import fmt_area, fmt_len
 
 class TextTool(AxisMagnet, Tool):
     name = "Text"
-    shortcut = "X"
+    shortcut = "Shift+X"
     description = (
         "Place a text with a leader pointing at the model; it "
         "suggests the length, area or coordinates of what you click.")

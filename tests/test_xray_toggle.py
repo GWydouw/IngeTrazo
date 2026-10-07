@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Marco Sumari Tellez and IngeTrazo contributors.
-"""Alt+X switches X-ray on and back off.
+"""X switches X-ray on and back off.
 
 A look through the faces is a glance: the key goes into X-ray and, pressed
 again, returns to the style you were in, edge and profile settings included.
@@ -29,14 +29,15 @@ def _close(win):
     win.close()
 
 
-def test_alt_x_is_the_toggle_and_no_other_action_holds_it():
+def test_x_is_the_toggle_and_text_uses_shift_x():
     from views.shortcuts import collect_actions
     win = _window()
     try:
-        alt_x = QKeySequence("Alt+X")
-        assert win._act_xray_toggle.shortcut() == alt_x
-        holders = [a for a in collect_actions(win) if alt_x in a.shortcuts()]
+        x = QKeySequence("X")
+        assert win._act_xray_toggle.shortcut() == x
+        holders = [a for a in collect_actions(win) if x in a.shortcuts()]
         assert holders == [win._act_xray_toggle]
+        assert win._tool_actions["text"].shortcut() == QKeySequence("Shift+X")
     finally:
         _close(win)
 
@@ -68,5 +69,30 @@ def test_xray_picked_from_the_menu_toggles_out_to_default():
         win._apply_display_style(style_by_name("X-ray"))
         win._act_xray_toggle.trigger()
         assert win.viewport.scene.display_style.name == "Default"
+    finally:
+        _close(win)
+
+
+def test_face_toolbar_preserves_settings_and_follows_scene_style():
+    from core.style import FACE_MODES, Style
+    win = _window()
+    try:
+        assert set(win._face_mode_actions) == set(FACE_MODES)
+        win.viewport.scene.display_style = Style(
+            name="Custom", background=(0.2, 0.3, 0.4), sky=False,
+            profiles=False)
+        for mode, action in win._face_mode_actions.items():
+            assert not action.icon().isNull()
+            action.trigger()
+            style = win.viewport.scene.display_style
+            assert style.face_mode == mode
+            assert style.background == (0.2, 0.3, 0.4)
+            assert not style.sky and not style.profiles
+            assert action.isChecked()
+        win._apply_display_style(Style(face_mode="hidden_line"))
+        assert win._face_mode_actions["hidden_line"].isChecked()
+        win._act_style_back_edges.trigger()
+        assert win.viewport.scene.display_style.back_edges
+        assert win._act_style_back_edges in win.toolbars["face_styles"].actions()
     finally:
         _close(win)

@@ -13073,7 +13073,7 @@ class Viewport(QOpenGLWidget):
             self._set_value_buffer(self._value_buffer + text)
             return True
         if arrays and text.lower() == "x" and self._current_token_tail():
-            # "3x" — only after a digit: bare X stays the Text tool shortcut.
+            # "3x" — only after a digit: bare X stays the X-ray shortcut.
             self._set_value_buffer(self._value_buffer + text)
             return True
         if arrays and text == "/" and not self._value_buffer:
