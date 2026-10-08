@@ -1,5 +1,8 @@
 # IngeTrazo
 
+> Guy's fork: see [product names, repositories and update workflow](docs/producten-en-updates.md)
+> for officiële iT, mijn iT, SiteRef for iT and SiteRef for SU.
+
 *Pronounced **EEN-heh-TRAH-soh** — from Spanish* inge(niería) *"engineering"
 +* trazo *"a drawn stroke": the engineer's stroke.*
 

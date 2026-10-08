@@ -1,5 +1,10 @@
 # Development guide
 
+For Guy's fork, the canonical product names, public/private branch boundaries,
+build readiness and official-update workflow are documented in
+[Producten en updates](producten-en-updates.md). Install the local push guard
+with `python3 scripts/install_push_guard.py` after cloning.
+
 ## Setup
 
 ```bash

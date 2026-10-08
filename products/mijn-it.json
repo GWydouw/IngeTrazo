@@ -1,0 +1,13 @@
+{
+  "id": "mijn-it",
+  "name": "mijn iT",
+  "full_name": "mijn ingeTrezo",
+  "host": "standalone",
+  "visibility": "public",
+  "entrypoint": "main.py",
+  "app_id": "com.ingetrazo.IngeTrazo",
+  "source_ready": true,
+  "packaging_ready": true,
+  "packaging": "ingetrazo.spec",
+  "notes": "Existing IngeTrazo runtime and packaging identity; no SiteRef modules."
+}
