@@ -2,8 +2,11 @@
 
 Dit document is de vaste afspraak voor ontwikkeling van Guy's ingeTrezo- en
 SiteRef-versies. `iT` betekent **ingeTrezo**, `SU` betekent **SketchUp**.
-Afkortingen en volledige namen mogen door elkaar worden gebruikt; hun betekenis
-blijft gelijk. De bestaande spelling `IngeTrazo` in broncode en repositorynamen
+De gebruiker mag afkortingen en volledige namen door elkaar gebruiken. De
+assistent schrijft in alle communicatie altijd **ingeTrezo** en **SketchUp**
+voluit, ook in productnamen: **officiële ingeTrezo**, **mijn ingeTrezo**,
+**SiteRef for ingeTrezo** en **SiteRef for SketchUp**. Technische identifiers
+blijven intact. De bestaande spelling `IngeTrazo` in broncode en repositorynamen
 blijft behouden om imports, paden en bestaande installaties niet te breken.
 
 ## Vier ondubbelzinnige namen
