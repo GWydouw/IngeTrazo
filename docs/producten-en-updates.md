@@ -179,6 +179,12 @@ altijd mijn iT, ook in de private werkmappen. Stel nooit een algemene
 `remote.siteref-private.push` in die elke push naar de oude companion-`main` stuurt.
 Controleer voor publiceren `git remote -v`, `git branch -vv` en `git push --dry-run`.
 
+De lokale `codex/siteref-for-*`-namen verschillen bewust van de korte private
+remote-branchnamen. Met `push.default=simple` kan een gewone `git push` daarom
+weigeren. Gebruik de expliciete productpush hierboven; die noemt altijd de
+bedoelde bestemming. Laat de oude companionbranch eveneens expliciet naar
+`siteref-private` pushen zolang die nog wordt gebruikt.
+
 ## Buildprofielen en traceerbaarheid
 
 `products/mijn-it.json` beschrijft de publieke uitvoering. Private profielen,

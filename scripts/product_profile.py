@@ -20,6 +20,8 @@ def inspect_profile(root, product, require_ready=False):
         raise ValueError("Incorrect product visibility")
     if private and not (root / ".siteref-private").is_file():
         raise ValueError("Private profile requires the private repository marker")
+    if not private and (root / ".siteref-private").exists():
+        raise ValueError("Inspect/build mijn iT from a public checkout, not private product history")
     for key in ("source_ready", "packaging_ready"):
         if not isinstance(data[key], bool):
             raise ValueError(f"{key} must be boolean")
