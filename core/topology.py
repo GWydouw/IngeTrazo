@@ -21,7 +21,11 @@ from core.geometry import Edge, Face
 
 
 _KEY_DECIMALS = 4
-_PLANAR_TOLERANCE = 1e-3
+# Keep surface matching/material recovery independent of face planarity.
+_PLANE_MATCH_TOLERANCE = 1e-3
+# Coordinates are metres: 0.001 inch = 0.0254 mm. A looser planarity
+# check accepts warped polygons that strict planar-face exporters reject.
+_PLANAR_TOLERANCE = 0.0254e-3
 # Two points closer than this weld together; also the gate for deciding a
 # crossing is real (skew lines whose closest approach exceeds it don't touch).
 _SPLIT_TOLERANCE = 1e-4
@@ -353,7 +357,7 @@ def loop_inside_face(mother: Face, loop: list[QVector3D],
     origin = mother.vertices[0]
     # Coplanarity: every loop vertex on the mother's plane.
     for v in loop:
-        if abs(QVector3D.dotProduct(normal, v - origin)) > _PLANAR_TOLERANCE:
+        if abs(QVector3D.dotProduct(normal, v - origin)) > _PLANE_MATCH_TOLERANCE:
             return False
 
     from core.triangulate import plane_axes
@@ -1207,7 +1211,7 @@ def _footprint_normal(footprint, face: Face):
     point = _interior_point(face.vertices, n)
     if point is None:
         return None
-    t = _PLANAR_TOLERANCE
+    t = _PLANE_MATCH_TOLERANCE
     px, py, pz = point.x(), point.y(), point.z()
     for _old, old_n, outer, holes, box in footprint:
         # After a curve the planar rebuild re-makes EVERY face, and each is
@@ -1220,7 +1224,7 @@ def _footprint_normal(footprint, face: Face):
             continue
         u, w = plane_axes(old_n)
         origin = outer[0]
-        if abs(QVector3D.dotProduct(point - origin, old_n)) > _PLANAR_TOLERANCE:
+        if abs(QVector3D.dotProduct(point - origin, old_n)) > _PLANE_MATCH_TOLERANCE:
             continue
 
         def proj(p):
@@ -1295,7 +1299,7 @@ def _collinear_overlapping(e1, e2) -> bool:
     if QVector3D.crossProduct(d1.normalized(), u).length() > 1e-4:
         return False  # not parallel
     rel = a - c
-    if (rel - u * QVector3D.dotProduct(rel, u)).length() > _PLANAR_TOLERANCE:
+    if (rel - u * QVector3D.dotProduct(rel, u)).length() > _PLANE_MATCH_TOLERANCE:
         return False  # parallel but offset (different line)
     ta = QVector3D.dotProduct(a - c, u)
     tb = QVector3D.dotProduct(b - c, u)
@@ -1482,6 +1486,13 @@ def fold_nonplanar_faces(mesh, tolerance: float = _PLANAR_TOLERANCE) -> list:
                         continue
                     if QVector3D.dotProduct(f.normal().normalized(),
                                             g.normal().normalized()) > 0.999:
+                        # Nearly parallel triangle normals do not imply a
+                        # planar union. Keep sub-millimetre folds instead of
+                        # immediately merging them back into a warped polygon.
+                        points = [p for piece in (f, g) for p in piece.vertices]
+                        points.extend(p for piece in (f, g) for hole in piece.holes for p in hole)
+                        if not is_planar(points, tolerance):
+                            continue
                         region = mesh.dissolve_edge(e)
                         if region is not None:
                             region.attrs = dict(face.attrs)
@@ -1511,8 +1522,8 @@ def prune_collinear_orphan_edges(mesh) -> list:
     # collinearity predicate on the imported barbecue, 2.8 s of a Delete.
     P = np.array([[e.a.x(), e.a.y(), e.a.z(), e.b.x(), e.b.y(), e.b.z()]
                   for e in edges], dtype=np.float64)
-    lo = np.minimum(P[:, :3], P[:, 3:]) - _PLANAR_TOLERANCE
-    hi = np.maximum(P[:, :3], P[:, 3:]) + _PLANAR_TOLERANCE
+    lo = np.minimum(P[:, :3], P[:, 3:]) - _PLANE_MATCH_TOLERANCE
+    hi = np.maximum(P[:, :3], P[:, 3:]) + _PLANE_MATCH_TOLERANCE
     slot = {id(e): i for i, e in enumerate(edges)}
     # An orphan already pruned must not prune the one it lay on: the bare
     # loop read the LIVE edge list, so the partner had to still be there.
@@ -1545,7 +1556,7 @@ def _mesh_is_flat(mesh) -> bool:
     for f in faces[1:]:
         if not _faces_coplanar(n0, f.normal()):
             return False
-        if abs(QVector3D.dotProduct(n0, f.vertices[0]) - d0) > _PLANAR_TOLERANCE:
+        if abs(QVector3D.dotProduct(n0, f.vertices[0]) - d0) > _PLANE_MATCH_TOLERANCE:
             return False
     return True
 
