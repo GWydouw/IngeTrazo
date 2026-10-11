@@ -1,5 +1,11 @@
 # Projectafspraken
 
+- Kleurvelden in panelen gebruiken altijd dezelfde stijl als de Tags- en
+  Clipboxes-panelen: een gecentreerd vierkant van 14 × 14 logische pixels,
+  met een dunne donkere rand en afgeronde hoeken (2 pixels), getekend via
+  de gedeelde `_LayerColorDelegate` uit `views/tray.py`. Behoud de normale
+  selectiekleur van de rij; gebruik geen losse rechthoekige kleuriconen.
+
 - Lees voor productnamen, branches, builds en updates `docs/producten-en-updates.md`.
   Vaste namen: **officiële iT** (ingelibre), **mijn iT** (Guy's publieke fork),
   **SiteRef for iT** (volledige iT + SiteRef) en **SiteRef for SU** (nieuwe SketchUp-companion).
