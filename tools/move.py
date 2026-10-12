@@ -4,7 +4,7 @@
 
 UX (the classic push/pull modeller behaviour):
 - If there's a selection, Move acts on it; otherwise the first click grabs the
-  edge / face under the cursor.
+  vertex / edge / face under the cursor.
 - First click sets the grab point (a snapped handle). Move the mouse — snap,
   axis lock (arrow keys) and the VCB all work, same as drawing — and the real
   geometry deforms live as you drag (faces tilt, walls stretch).
@@ -57,19 +57,29 @@ def _dedup(positions: list[QVector3D]) -> list[QVector3D]:
     return out
 
 
-def gather_targets(ctx: ToolContext):
+def gather_targets(ctx: ToolContext, *, endpoints: bool = False):
     """What a transform tool acts on: ``(groups, positions)``. EVERY selected
     (or hovered) group transforms as a unit — a mixed selection carries the
     groups AND the loose geometry together (rotating a whole drawing used to
     grab only the first group). Positions are the unique loose coordinates
     from the selection or the entity under the cursor. Shared by Move,
-    Rotate and Scale."""
+    Rotate and Scale. Move alone enables ``endpoints`` to grab a loose
+    vertex before an edge or face when nothing is selected."""
     viewport = ctx.viewport
     entities = list(viewport.scene.selection)
     if not entities:
         group = viewport.pick_group(ctx.screen.x(), ctx.screen.y())
         if group is not None:
             return ([] if viewport.scene.group_locked(group) else [group]), []
+        if (endpoints and ctx.snap is not None
+                and ctx.snap.kind == "endpoint" and ctx.snap.context is None):
+            # A snapped loose endpoint is a deformation handle, not a request
+            # to translate both ends of the edge beneath the cursor. Resolve
+            # it in the active mesh: component and reference snaps are handles
+            # only and must never move coincident loose geometry behind them.
+            vertex = viewport.scene.mesh.vertex_at(ctx.snap.point)
+            if vertex is not None:
+                return [], [QVector3D(vertex.position)]
         edge = viewport.pick_edge(ctx.screen.x(), ctx.screen.y())
         if edge is not None:
             entities = [edge]
@@ -625,7 +635,7 @@ class MoveTool(Tool):
 
     # ---- Internals ----------------------------------------------------------
     def _gather(self, ctx: ToolContext):
-        return gather_targets(ctx)
+        return gather_targets(ctx, endpoints=True)
 
     def _gather_copy_entities(self, ctx: ToolContext) -> None:
         """The faces/edges copy mode duplicates, and the wireframe segments
