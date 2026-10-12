@@ -20,6 +20,8 @@ folder) and restart IngeTrazo. The «Niveles» tab appears in the side tray.
 """
 from __future__ import annotations
 
+from core.appearance import ACCENT_RGB
+
 import math
 
 from PySide6.QtCore import QPointF, Qt
@@ -34,7 +36,7 @@ from core.i18n import current_language
 
 #: Guides and snapping only when the view looks sideways: |pitch| below this.
 MAX_PITCH_DEG = 15.0
-COLOR = (0.95, 0.45, 0.16)                    # IngeTrazo's accent
+COLOR = ACCENT_RGB                    # IngeTrazo's accent
 
 # An extension brings its own words — the core catalogues stay the core's.
 _TEXTS = {

@@ -24,6 +24,8 @@ viewport directly.
 """
 from __future__ import annotations
 
+from core.appearance import ACCENT_RGB
+
 import math
 from dataclasses import dataclass
 from typing import Callable, Optional
@@ -36,7 +38,7 @@ COLOR_ENDPOINT = (0.16, 0.62, 0.36)
 COLOR_MIDPOINT = (0.20, 0.66, 0.74)  # cyan — midpoint of an edge
 COLOR_ON_EDGE = (0.86, 0.22, 0.27)   # red — arbitrary point on an edge
 COLOR_ON_FACE = (0.42, 0.46, 0.92)   # blue/violet — point on a face
-COLOR_ORIGIN = (0.95, 0.45, 0.16)
+COLOR_ORIGIN = ACCENT_RGB
 COLOR_CLOSE = (0.20, 0.40, 0.78)
 COLOR_AXIS_X = (0.86, 0.22, 0.27)
 COLOR_AXIS_Y = (0.16, 0.62, 0.36)

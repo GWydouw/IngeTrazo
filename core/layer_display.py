@@ -5,11 +5,12 @@ from array import array
 from core.layers import DEFAULT_LAYER, display_layer_name, default_layer_color, layer_of
 
 
-def _display_meshes(scene, rest_mode, preview_groups):
+def _display_meshes(scene, rest_mode, preview_groups, include_material=False):
     """Visible meshes with composed transforms and inherited container tags."""
     editing = scene.edit_group
     if editing is None or rest_mode != "hide":
-        yield scene.loose_mesh, None, DEFAULT_LAYER, editing is not None
+        entry = (scene.loose_mesh, None, DEFAULT_LAYER, editing is not None)
+        yield entry + (None,) if include_material else entry
 
     def walk(group, parent_matrix=None, inherited=DEFAULT_LAYER, subject=False):
         if not scene.entity_visible(group) or id(group) in preview_groups:
@@ -21,7 +22,12 @@ def _display_meshes(scene, rest_mode, preview_groups):
         subject = subject or group is editing
         context = editing is not None and not subject
         if not context or rest_mode != "hide":
-            yield group.mesh, matrix, name, context
+            entry = (group.mesh, matrix, name, context)
+            if include_material:
+                from core.group import effective_material
+                yield entry + (effective_material(group),)
+            else:
+                yield entry
         for child in group.children:
             yield from walk(child, matrix, name, subject)
 
@@ -42,7 +48,7 @@ def _transformed_vertices(vertices, matrix):
     return (vertices @ transform[:3, :3].T + transform[:3, 3]).astype(np.float32).tobytes()
 
 
-def layer_line_buffers(scene, default_color, rest_mode="show", preview_groups=()):
+def layer_line_buffers(scene, default_color, rest_mode="show", preview_groups=(), color_mode="all_same"):
     """Hard edges grouped by effective colour, line pattern and edit context.
 
     Each shared mesh is read once; placements transform its local buffers.
@@ -55,20 +61,28 @@ def layer_line_buffers(scene, default_color, rest_mode="show", preview_groups=()
         scene.layer_setting(layer.name, "edge_color", tuple(default_color)),
         scene.layer_setting(layer.name, "line_style", "solid"))
         for layer in scene.layers}
-    for mesh, matrix, inherited, context in _display_meshes(
-            scene, rest_mode, preview_groups):
-        if id(mesh) not in meshes:
+    for mesh, matrix, inherited, context, paint in _display_meshes(
+            scene, rest_mode, preview_groups, include_material=True):
+        mesh_key = (id(mesh), repr(paint) if color_mode == "by_material" else None)
+        if mesh_key not in meshes:
             local = {}
             for edge in mesh.edges:
                 if (not scene.entity_visible(edge) or getattr(edge, "soft", False)
                         or getattr(edge, "hidden", False)):
                     continue
-                local.setdefault(layer_of(edge), []).extend((edge.a.toTuple(), edge.b.toTuple()))
-            meshes[id(mesh)] = {name: np.asarray(points, dtype=np.float32)
+                material_color = None
+                if color_mode == "by_material":
+                    from core.materials import effective_attrs
+                    attrs = edge.faces[0].attrs if edge.faces else {}
+                    material_color = tuple(effective_attrs(attrs, paint).get("color") or default_color)
+                local.setdefault((layer_of(edge), material_color), []).extend((edge.a.toTuple(), edge.b.toTuple()))
+            meshes[mesh_key] = {name: np.asarray(points, dtype=np.float32)
                                 for name, points in local.items()}
-        for tag, vertices in meshes[id(mesh)].items():
+        for (tag, material_color), vertices in meshes[mesh_key].items():
             name = inherited if tag == DEFAULT_LAYER else tag
             color, pattern = settings.get(name, (tuple(default_color), "solid"))
+            if material_color is not None:
+                color = material_color
             key = (color, pattern, context and rest_mode == "fade")
             runs.setdefault(key, array("f")).frombytes(_transformed_vertices(vertices, matrix))
     data, spans = array("f"), []

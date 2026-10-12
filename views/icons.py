@@ -63,7 +63,7 @@ def _canvas():
 
 
 def _accent() -> QColor:
-    return QColor(243, 115, 41)   # IngeTrazo orange, for endpoint dots / handles
+    return QColor(243, 115, 41)   # Interface orange, independent of model selection colors
 
 
 # ---- Per-tool drawings ---------------------------------------------------------
@@ -1856,7 +1856,26 @@ def _face_style(p, ink, mode):
             p.drawLine(QPointF(23, y + 5), QPointF(38, y - 3))
 
 
+def _style_modeling(p, ink):
+    _face_style(p, ink, "shaded")
+    p.setPen(QPen(QColor("#1237bd"), 1.4))
+    for x in (25, 30, 35):
+        p.drawLine(x, 28-(x-21)*.58, x, 42-(x-23)*.53)
+
+
+def _style_watermark(p, ink):
+    _face_style(p, ink, "textures")
+    p.setPen(QPen(ink, 1.5))
+    p.setBrush(QColor("#ffffff"))
+    p.drawEllipse(QRectF(27,29,18,15))
+    font = p.font()
+    font.setPixelSize(9)
+    p.setFont(font)
+    p.drawText(QRectF(27,29,18,15), Qt.AlignCenter, "ok")
+
+
 _DRAW = {
+    "style_modeling": _style_modeling, "style_watermark": _style_watermark,
     **{f"face_{mode}": (lambda p, ink, m=mode: _face_style(p, ink, m))
        for mode in ("xray", "back_edges", "wireframe", "hidden_line",
                     "shaded", "textures", "monochrome")},

@@ -11,6 +11,8 @@ the same code the PDF export uses, so screen and paper always agree.
 """
 from __future__ import annotations
 
+from views.color_selector import ColorSelector
+
 from views import prompts as _prompts
 
 import datetime
@@ -6050,7 +6052,7 @@ class ComposerWindow(QMainWindow):
             self.border_style.addItem(label, key)
         self.border_style.currentIndexChanged.connect(self._on_border_changed)
         form.addRow(tr("Border style"), self.border_style)
-        self.border_color_btn = QPushButton()
+        self.border_color_btn = ColorSelector()
         self.border_color_btn.setFixedHeight(22)
         self.border_color_btn.clicked.connect(self._on_pick_border_color)
         form.addRow(tr("Border colour"), self.border_color_btn)
@@ -6415,7 +6417,10 @@ class ComposerWindow(QMainWindow):
         self.style_combo.addItem(tr("Model style"), "sombreado")
         for preset in BUILTIN_STYLES:
             self.style_combo.addItem(tr(preset.name), f"style:{preset.name}")
-        for saved in user_styles():
+        from core.style_library import model_styles
+        for saved in user_styles() + model_styles(self._window.viewport.scene):
+            if self.style_combo.findData(f"style:{saved.name}") >= 0:
+                continue
             # The user library too (saved names stay verbatim — they are the
             # user's own words, not ours to translate).
             self.style_combo.addItem(saved.name, f"style:{saved.name}")
@@ -6540,7 +6545,7 @@ class ComposerWindow(QMainWindow):
         self.frame_border_mm.setValue(0.3)
         self.frame_border_mm.valueChanged.connect(self._on_frame_props)
         form.addRow(tr("Border width"), self.frame_border_mm)
-        self.frame_border_btn = QPushButton()
+        self.frame_border_btn = ColorSelector()
         self.frame_border_btn.setFixedHeight(22)
         self.frame_border_btn.clicked.connect(
             lambda: self._pick_item_color("border_color",
@@ -6597,7 +6602,7 @@ class ComposerWindow(QMainWindow):
             "closed solids fill; an open surface stays white."))
         self.cut_fill_combo.currentIndexChanged.connect(self._on_frame_pens)
         _row(self._pen_rows, tr("Section fill"), self.cut_fill_combo)
-        self.cut_fill_btn = QPushButton()
+        self.cut_fill_btn = ColorSelector()
         self.cut_fill_btn.setFixedHeight(22)
         self.cut_fill_btn.clicked.connect(
             lambda: self._pick_item_color("cut_fill_color",
@@ -6679,14 +6684,14 @@ class ComposerWindow(QMainWindow):
             self.text_align.addItem(label, key)
         self.text_align.currentIndexChanged.connect(self._on_text_align)
         form.addRow(tr("Alignment"), self.text_align)
-        self.text_color_btn = QPushButton()
+        self.text_color_btn = ColorSelector()
         self.text_color_btn.setFixedHeight(22)
         self.text_color_btn.clicked.connect(self._on_pick_text_color)
         form.addRow(tr("Colour"), self.text_color_btn)
         self.text_bg_check = QCheckBox(tr("Background"))
         self.text_bg_check.toggled.connect(self._on_text_bg_toggled)
         form.addRow("", self.text_bg_check)
-        self.text_bg_btn = QPushButton()
+        self.text_bg_btn = ColorSelector()
         self.text_bg_btn.setFixedHeight(22)
         self.text_bg_btn.clicked.connect(self._on_pick_text_bg)
         form.addRow(tr("Background colour"), self.text_bg_btn)
@@ -6731,7 +6736,7 @@ class ComposerWindow(QMainWindow):
         self.forma_stroke.setSuffix(" mm")
         self.forma_stroke.valueChanged.connect(self._on_forma_props)
         form.addRow(tr("Line width"), self.forma_stroke)
-        self.forma_color_btn = QPushButton()
+        self.forma_color_btn = ColorSelector()
         self.forma_color_btn.setFixedHeight(22)
         self.forma_color_btn.clicked.connect(
             lambda: self._pick_forma_color("color", self.forma_color_btn))
@@ -6750,7 +6755,7 @@ class ComposerWindow(QMainWindow):
         self.forma_fill = QCheckBox(tr("Fill"))
         self.forma_fill.toggled.connect(self._on_forma_props)
         form.addRow("", self.forma_fill)
-        self.forma_fill_btn = QPushButton()
+        self.forma_fill_btn = ColorSelector()
         self.forma_fill_btn.setFixedHeight(22)
         self.forma_fill_btn.clicked.connect(
             lambda: self._pick_forma_color("fill_color",
@@ -6805,7 +6810,7 @@ class ComposerWindow(QMainWindow):
                                     self, tr("Colour"))
         if col.isValid():
             self._panel_edit(item, {attr: col.name()})
-            button.setStyleSheet(f"QAbstractButton {{ background: {col.name()}; }}")
+            button.set_color(QColor(col.name()))
 
     def _page_cota(self) -> QWidget:
         w = QWidget()
@@ -6859,7 +6864,7 @@ class ComposerWindow(QMainWindow):
         self.cota_stroke.setSuffix(" mm")
         self.cota_stroke.valueChanged.connect(self._on_cota_props)
         form.addRow(tr("Line width"), self.cota_stroke)
-        self.cota_color_btn = QPushButton()
+        self.cota_color_btn = ColorSelector()
         self.cota_color_btn.setFixedHeight(22)
         self.cota_color_btn.clicked.connect(self._on_pick_cota_color)
         form.addRow(tr("Colour"), self.cota_color_btn)
@@ -6919,7 +6924,7 @@ class ComposerWindow(QMainWindow):
         self.cota_text_same.setChecked(True)
         self.cota_text_same.toggled.connect(self._on_cota_props)
         form.addRow("", self.cota_text_same)
-        self.cota_text_color_btn = QPushButton()
+        self.cota_text_color_btn = ColorSelector()
         self.cota_text_color_btn.setFixedHeight(22)
         self.cota_text_color_btn.clicked.connect(self._on_pick_cota_text_color)
         form.addRow(tr("Text colour"), self.cota_text_color_btn)
@@ -6927,7 +6932,7 @@ class ComposerWindow(QMainWindow):
         self.cota_bg_check.toggled.connect(
             lambda on: self._toggle_item_bg("text_bg", on, self.cota_bg_btn))
         form.addRow("", self.cota_bg_check)
-        self.cota_bg_btn = QPushButton()
+        self.cota_bg_btn = ColorSelector()
         self.cota_bg_btn.setFixedHeight(22)
         self.cota_bg_btn.clicked.connect(
             lambda: self._pick_item_bg("text_bg", self.cota_bg_check,
@@ -6968,7 +6973,7 @@ class ComposerWindow(QMainWindow):
         self.ll_stroke.setSuffix(" mm")
         self.ll_stroke.valueChanged.connect(self._on_llamada_props)
         form.addRow(tr("Line width"), self.ll_stroke)
-        self.ll_color_btn = QPushButton()
+        self.ll_color_btn = ColorSelector()
         self.ll_color_btn.setFixedHeight(22)
         self.ll_color_btn.clicked.connect(
             lambda: self._pick_item_color("color", self.ll_color_btn))
@@ -7036,7 +7041,7 @@ class ComposerWindow(QMainWindow):
         self.nv_stroke.setSuffix(" mm")
         self.nv_stroke.valueChanged.connect(self._on_nivel_props)
         form.addRow(tr("Line width"), self.nv_stroke)
-        self.nv_color_btn = QPushButton()
+        self.nv_color_btn = ColorSelector()
         self.nv_color_btn.setFixedHeight(22)
         self.nv_color_btn.clicked.connect(
             lambda: self._pick_item_color("color", self.nv_color_btn))
@@ -7087,7 +7092,7 @@ class ComposerWindow(QMainWindow):
         self.et_stroke.setValue(0.25)
         self.et_stroke.valueChanged.connect(self._on_etiqueta_props)
         form.addRow(tr("Line width"), self.et_stroke)
-        self.et_color_btn = QPushButton()
+        self.et_color_btn = ColorSelector()
         self.et_color_btn.setFixedHeight(22)
         self.et_color_btn.clicked.connect(
             lambda: self._pick_item_color("color", self.et_color_btn))
@@ -7096,7 +7101,7 @@ class ComposerWindow(QMainWindow):
         self.et_bg_check.toggled.connect(
             lambda on: self._toggle_item_bg("bg_color", on, self.et_bg_btn))
         form.addRow("", self.et_bg_check)
-        self.et_bg_btn = QPushButton()
+        self.et_bg_btn = ColorSelector()
         self.et_bg_btn.setFixedHeight(22)
         self.et_bg_btn.clicked.connect(
             lambda: self._pick_item_bg("bg_color", self.et_bg_check,
@@ -7174,7 +7179,7 @@ class ComposerWindow(QMainWindow):
         self.crad_stroke.setSuffix(" mm")
         self.crad_stroke.valueChanged.connect(self._on_cota_rad_props)
         form.addRow(tr("Line width"), self.crad_stroke)
-        self.crad_color_btn = QPushButton()
+        self.crad_color_btn = ColorSelector()
         self.crad_color_btn.setFixedHeight(22)
         self.crad_color_btn.clicked.connect(
             lambda: self._pick_item_color("color", self.crad_color_btn))
@@ -7236,12 +7241,12 @@ class ComposerWindow(QMainWindow):
         self.cang_stroke.setSuffix(" mm")
         self.cang_stroke.valueChanged.connect(self._on_cota_ang_props)
         form.addRow(tr("Line width"), self.cang_stroke)
-        self.cang_color_btn = QPushButton()
+        self.cang_color_btn = ColorSelector()
         self.cang_color_btn.setFixedHeight(22)
         self.cang_color_btn.clicked.connect(
             lambda: self._pick_item_color("color", self.cang_color_btn))
         form.addRow(tr("Colour"), self.cang_color_btn)
-        self.cang_text_color_btn = QPushButton()
+        self.cang_text_color_btn = ColorSelector()
         self.cang_text_color_btn.setFixedHeight(22)
         self.cang_text_color_btn.clicked.connect(
             lambda: self._pick_item_color("text_color",
@@ -7251,7 +7256,7 @@ class ComposerWindow(QMainWindow):
         self.cang_bg_check.toggled.connect(
             lambda on: self._toggle_item_bg("text_bg", on, self.cang_bg_btn))
         form.addRow("", self.cang_bg_check)
-        self.cang_bg_btn = QPushButton()
+        self.cang_bg_btn = ColorSelector()
         self.cang_bg_btn.setFixedHeight(22)
         self.cang_bg_btn.clicked.connect(
             lambda: self._pick_item_bg("text_bg", self.cang_bg_check,
@@ -7313,7 +7318,7 @@ class ComposerWindow(QMainWindow):
         self.img_border_mm.setValue(0.3)
         self.img_border_mm.valueChanged.connect(self._on_image_props)
         form.addRow(tr("Outline width"), self.img_border_mm)
-        self.img_border_btn = QPushButton()
+        self.img_border_btn = ColorSelector()
         self.img_border_btn.setFixedHeight(22)
         self.img_border_btn.clicked.connect(
             lambda: self._pick_item_color("border_color", self.img_border_btn))
@@ -7431,7 +7436,7 @@ class ComposerWindow(QMainWindow):
         self.caj_fill_check = QCheckBox(tr("Fill (labels / band)"))
         self.caj_fill_check.toggled.connect(self._on_cajetin_fill_toggled)
         form.addRow("", self.caj_fill_check)
-        self.caj_fill_btn = QPushButton()
+        self.caj_fill_btn = ColorSelector()
         self.caj_fill_btn.setFixedHeight(22)
         self.caj_fill_btn.clicked.connect(
             lambda: self._pick_item_bg("fill_color", self.caj_fill_check,
@@ -7441,7 +7446,7 @@ class ComposerWindow(QMainWindow):
         for attr, label in (("label_color", tr("Label colour")),
                             ("text_color", tr("Text colour")),
                             ("line_color", tr("Line colour"))):
-            btn = QPushButton()
+            btn = ColorSelector()
             btn.setFixedHeight(22)
             btn.clicked.connect(
                 lambda _c=False, a=attr, b=btn: self._pick_item_color(a, b))
@@ -7953,8 +7958,7 @@ class ComposerWindow(QMainWindow):
                     bool(getattr(f, "border", False)))
                 self.frame_border_mm.setValue(
                     float(getattr(f, "border_mm", 0.3) or 0.3))
-                self.frame_border_btn.setStyleSheet(
-                    f"background: {getattr(f, 'border_color', '#282e36')};")
+                self.frame_border_btn.set_color(QColor(getattr(f, 'border_color', '#282e36')))
                 self.pen_cut_spin.setValue(
                     float(getattr(f, "pen_cut_mm", 0.5) or 0.5))
                 self.pen_profile_spin.setValue(
@@ -7968,9 +7972,7 @@ class ComposerWindow(QMainWindow):
                 fidx = self.cut_fill_combo.findData(
                     getattr(f, "cut_fill", "solid") or "solid")
                 self.cut_fill_combo.setCurrentIndex(max(fidx, 0))
-                self.cut_fill_btn.setStyleSheet(
-                    f"background: "
-                    f"{getattr(f, 'cut_fill_color', '') or '#595e69'};")
+                self.cut_fill_btn.set_color(QColor(getattr(f, 'cut_fill_color', '') or '#595e69'))
                 self.cut_hatch_spin.setValue(
                     float(getattr(f, "cut_hatch_mm", 1.5) or 1.5))
                 self._sync_vector_widgets(f)
@@ -7989,12 +7991,10 @@ class ComposerWindow(QMainWindow):
                 self.text_family.setCurrentFont(_QF(t.family))
                 aidx = self.text_align.findData(t.align)
                 self.text_align.setCurrentIndex(max(aidx, 0))
-                self.text_color_btn.setStyleSheet(
-                    f"background: {t.color};")
+                self.text_color_btn.set_color(QColor(t.color))
                 bg = getattr(t, "bg_color", "") or ""
                 self.text_bg_check.setChecked(bool(bg))
-                self.text_bg_btn.setStyleSheet(
-                    f"background: {bg};" if bg else "")
+                self.text_bg_btn.set_color(QColor(bg) if bg else None)
                 self.text_bg_opacity.setValue(
                     100.0 * float(getattr(t, "bg_opacity", 1.0)))
                 self.props.setCurrentIndex(2)
@@ -8018,8 +8018,7 @@ class ComposerWindow(QMainWindow):
                 self.img_border.setChecked(bool(getattr(m, "border", False)))
                 self.img_border_mm.setValue(
                     float(getattr(m, "border_mm", 0.3) or 0.3))
-                self.img_border_btn.setStyleSheet(
-                    f"background: {getattr(m, 'border_color', '#282e36')};")
+                self.img_border_btn.set_color(QColor(getattr(m, 'border_color', '#282e36')))
                 self.props.setCurrentIndex(3)
             elif isinstance(item, CajetinItem):
                 c = item.model
@@ -8048,11 +8047,9 @@ class ComposerWindow(QMainWindow):
                     bool(getattr(c, "double_border", False)))
                 fill = getattr(c, "fill_color", "") or ""
                 self.caj_fill_check.setChecked(bool(fill))
-                self.caj_fill_btn.setStyleSheet(
-                    f"background: {fill};" if fill else "")
+                self.caj_fill_btn.set_color(QColor(fill) if fill else None)
                 for attr, btn in self.caj_color_btns.items():
-                    btn.setStyleSheet(
-                        f"background: {getattr(c, attr, '') or '#1e242c'};")
+                    btn.set_color(QColor(getattr(c, attr, '') or '#1e242c'))
                 self._reload_cajetin_designs()
                 key = c.design_key() if hasattr(c, "design_key") else ""
                 self.caj_design.setCurrentIndex(
@@ -8078,10 +8075,8 @@ class ComposerWindow(QMainWindow):
                 self.forma_invert.setChecked(fm.invert)
                 self.forma_radius.setValue(fm.radius_mm)
                 self.forma_sides.setValue(fm.sides)
-                self.forma_color_btn.setStyleSheet(
-                    f"background: {fm.color};")
-                self.forma_fill_btn.setStyleSheet(
-                    f"background: {fm.fill_color};")
+                self.forma_color_btn.set_color(QColor(fm.color))
+                self.forma_fill_btn.set_color(QColor(fm.fill_color))
                 self.forma_invert.setVisible(
                     fm.kind in ("linea", "flecha", "terreno"))
                 self.forma_fill.setVisible(fillable)
@@ -8117,8 +8112,7 @@ class ComposerWindow(QMainWindow):
                 eidx = self.cota_ends.findData(item.model.ends)
                 self.cota_ends.setCurrentIndex(max(eidx, 0))
                 self.cota_stroke.setValue(item.model.stroke_mm)
-                self.cota_color_btn.setStyleSheet(
-                    f"background: {item.model.color};")
+                self.cota_color_btn.set_color(QColor(item.model.color))
                 pidx = self.cota_text_pos.findData(
                     getattr(item.model, "text_pos", "above") or "above")
                 self.cota_text_pos.setCurrentIndex(max(pidx, 0))
@@ -8135,12 +8129,10 @@ class ComposerWindow(QMainWindow):
                 self.cota_text_align.setCurrentIndex(max(aidx, 0))
                 tcol = getattr(item.model, "text_color", "") or ""
                 self.cota_text_same.setChecked(not tcol)
-                self.cota_text_color_btn.setStyleSheet(
-                    f"background: {tcol or item.model.color};")
+                self.cota_text_color_btn.set_color(QColor(tcol or item.model.color))
                 tbg = getattr(item.model, "text_bg", "") or ""
                 self.cota_bg_check.setChecked(bool(tbg))
-                self.cota_bg_btn.setStyleSheet(
-                    f"background: {tbg};" if tbg else "")
+                self.cota_bg_btn.set_color(QColor(tbg) if tbg else None)
                 self.cota_bg_opacity.setValue(100.0 * float(
                     getattr(item.model, "text_bg_opacity", 1.0)))
                 self.props.setCurrentIndex(9)
@@ -8156,10 +8148,9 @@ class ComposerWindow(QMainWindow):
                 self.et_arrow.setChecked(m.arrow)
                 self.et_dot.setChecked(bool(getattr(m, "dot", True)))
                 self.et_stroke.setValue(m.stroke_mm)
-                self.et_color_btn.setStyleSheet(f"QAbstractButton {{ background: {m.color}; }}")
+                self.et_color_btn.set_color(QColor(m.color))
                 self.et_bg_check.setChecked(bool(m.bg_color))
-                self.et_bg_btn.setStyleSheet(
-                    f"background: {m.bg_color};" if m.bg_color else "")
+                self.et_bg_btn.set_color(QColor(m.bg_color) if m.bg_color else None)
                 self.et_bg_opacity.setValue(100.0 * float(m.bg_opacity))
                 self.props.setCurrentIndex(11)
             elif isinstance(item, LlamadaCanvasItem):
@@ -8172,7 +8163,7 @@ class ComposerWindow(QMainWindow):
                 self.ll_shape.setCurrentIndex(max(sidx, 0))
                 self.ll_size.setValue(float(m.size_mm))
                 self.ll_stroke.setValue(float(m.stroke_mm))
-                self.ll_color_btn.setStyleSheet(f"QAbstractButton {{ background: {m.color}; }}")
+                self.ll_color_btn.set_color(QColor(m.color))
                 self.ll_follow.setChecked(bool(m.follow))
                 self.ll_follow.setEnabled(bool(m.frame_uid))
                 self.props.setCurrentIndex(14)
@@ -8194,7 +8185,7 @@ class ComposerWindow(QMainWindow):
                 self.nv_line.setValue(float(m.line_mm))
                 self.nv_mirror.setChecked(bool(m.mirror))
                 self.nv_stroke.setValue(float(m.stroke_mm))
-                self.nv_color_btn.setStyleSheet(f"QAbstractButton {{ background: {m.color}; }}")
+                self.nv_color_btn.set_color(QColor(m.color))
                 self.props.setCurrentIndex(13)
             elif isinstance(item, PerfilItem):
                 m = item.model
@@ -8232,7 +8223,7 @@ class ComposerWindow(QMainWindow):
                 eidx = self.crad_ends.findData(m.ends)
                 self.crad_ends.setCurrentIndex(max(eidx, 0))
                 self.crad_stroke.setValue(m.stroke_mm)
-                self.crad_color_btn.setStyleSheet(f"QAbstractButton {{ background: {m.color}; }}")
+                self.crad_color_btn.set_color(QColor(m.color))
                 self.props.setCurrentIndex(15)
             elif isinstance(item, CotaAngularCanvasItem):
                 m = item.model
@@ -8243,13 +8234,11 @@ class ComposerWindow(QMainWindow):
                 eidx = self.cang_ends.findData(m.ends)
                 self.cang_ends.setCurrentIndex(max(eidx, 0))
                 self.cang_stroke.setValue(m.stroke_mm)
-                self.cang_color_btn.setStyleSheet(f"QAbstractButton {{ background: {m.color}; }}")
-                self.cang_text_color_btn.setStyleSheet(
-                    f"background: {m.text_color or m.color};")
+                self.cang_color_btn.set_color(QColor(m.color))
+                self.cang_text_color_btn.set_color(QColor(m.text_color or m.color))
                 abg = getattr(m, "text_bg", "") or ""
                 self.cang_bg_check.setChecked(bool(abg))
-                self.cang_bg_btn.setStyleSheet(
-                    f"background: {abg};" if abg else "")
+                self.cang_bg_btn.set_color(QColor(abg) if abg else None)
                 self.cang_bg_opacity.setValue(
                     100.0 * float(getattr(m, "text_bg_opacity", 1.0)))
                 self.props.setCurrentIndex(10)
@@ -10059,7 +10048,7 @@ class ComposerWindow(QMainWindow):
                                     tr("Border colour"))
         if col.isValid():
             self.comp.border_color = col.name()
-            self.border_color_btn.setStyleSheet(f"QAbstractButton {{ background: {col.name()}; }}")
+            self.border_color_btn.set_color(QColor(col.name()))
             self._mark_dirty()
             self._rebuild_canvas()
 
@@ -10074,8 +10063,7 @@ class ComposerWindow(QMainWindow):
             sidx = self.border_style.findData(
                 getattr(c, "border_style", "single") or "single")
             self.border_style.setCurrentIndex(max(sidx, 0))
-            self.border_color_btn.setStyleSheet(
-                f"background: {getattr(c, 'border_color', '#1e242c')};")
+            self.border_color_btn.set_color(QColor(getattr(c, 'border_color', '#1e242c')))
         finally:
             self._updating = False
 
@@ -10470,7 +10458,7 @@ class ComposerWindow(QMainWindow):
         last = getattr(self, "_last_cajetin_fill", "#e9ecf0")
         item.prepareGeometryChange()
         self._panel_edit(item, {"fill_color": last if on else ""})
-        self.caj_fill_btn.setStyleSheet(f"QAbstractButton {{ background: {last}; }}" if on else "")
+        self.caj_fill_btn.set_color(QColor(last) if on else None)
         self._sync_cajetin_design_combo(item.model)
 
     def _on_cajetin_design(self, *_a) -> None:
@@ -10656,8 +10644,7 @@ class ComposerWindow(QMainWindow):
         last = getattr(self, "_last_text_bg", "#ffffff")
         item.prepareGeometryChange()
         self._panel_edit(item, {"bg_color": last if on else ""})
-        self.text_bg_btn.setStyleSheet(
-            f"background: {last};" if on else "")
+        self.text_bg_btn.set_color(QColor(last) if on else None)
 
     def _on_pick_text_bg(self) -> None:
         item = self._selected_item()
@@ -10674,7 +10661,7 @@ class ComposerWindow(QMainWindow):
             self._updating = True
             self.text_bg_check.setChecked(True)
             self._updating = False
-            self.text_bg_btn.setStyleSheet(f"QAbstractButton {{ background: {col.name()}; }}")
+            self.text_bg_btn.set_color(QColor(col.name()))
 
     def _on_pick_text_color(self) -> None:
         item = self._selected_item()
@@ -10684,7 +10671,7 @@ class ComposerWindow(QMainWindow):
                                     tr("Colour"))
         if col.isValid():
             self._panel_edit(item, {"color": col.name()})
-            self.text_color_btn.setStyleSheet(f"QAbstractButton {{ background: {col.name()}; }}")
+            self.text_color_btn.set_color(QColor(col.name()))
 
     def _on_norte_props(self, *_a) -> None:
         item = self._selected_item()
@@ -10873,7 +10860,7 @@ class ComposerWindow(QMainWindow):
         last = getattr(self, "_last_text_bg", "#ffffff")
         item.prepareGeometryChange()
         self._panel_edit(item, {attr: last if on else ""})
-        button.setStyleSheet(f"QAbstractButton {{ background: {last}; }}" if on else "")
+        button.set_color(QColor(last) if on else None)
         if isinstance(item.model, CotaItem):
             self._remember_cota_style(item.model)
 
@@ -10892,7 +10879,7 @@ class ComposerWindow(QMainWindow):
             self._updating = True
             check.setChecked(True)
             self._updating = False
-            button.setStyleSheet(f"QAbstractButton {{ background: {col.name()}; }}")
+            button.set_color(QColor(col.name()))
             if isinstance(item.model, CotaItem):
                 self._remember_cota_style(item.model)
 
@@ -10906,7 +10893,7 @@ class ComposerWindow(QMainWindow):
         if col.isValid():
             item.prepareGeometryChange()
             self._panel_edit(item, {attr: col.name()})
-            button.setStyleSheet(f"QAbstractButton {{ background: {col.name()}; }}")
+            button.set_color(QColor(col.name()))
 
     def _on_pick_cota_text_color(self) -> None:
         item = self._selected_item()
@@ -10920,8 +10907,7 @@ class ComposerWindow(QMainWindow):
             self.cota_text_same.setChecked(False)
             self._updating = False
             self._panel_edit(item, {"text_color": col.name()})
-            self.cota_text_color_btn.setStyleSheet(
-                f"background: {col.name()};")
+            self.cota_text_color_btn.set_color(QColor(col.name()))
             self._remember_cota_style(item.model)
 
     #: Style fields a new cota inherits from the last one edited (the usual
@@ -10992,7 +10978,7 @@ class ComposerWindow(QMainWindow):
                                     tr("Colour"))
         if col.isValid():
             self._panel_edit(item, {"color": col.name()})
-            self.cota_color_btn.setStyleSheet(f"QAbstractButton {{ background: {col.name()}; }}")
+            self.cota_color_btn.set_color(QColor(col.name()))
 
     def _item_label(self, model) -> str:
         if isinstance(model, EtiquetaItem):
@@ -11947,7 +11933,7 @@ class ComposerWindow(QMainWindow):
                 elif (isinstance(frame.style, str)
                         and frame.style.startswith("style:")):
                     from core.style import style_by_name
-                    vp.style_override = style_by_name(frame.style[6:])
+                    vp.style_override = style_by_name(frame.style[6:],vp.scene)
                 if getattr(frame, "paper_bg", False) and vp.plano_style is None:
                     # the paper is the background: white, no sky/ground
                     from dataclasses import replace

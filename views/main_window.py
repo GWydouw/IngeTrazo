@@ -526,6 +526,14 @@ class MainWindow(QMainWindow):
         from PySide6.QtWidgets import QToolButton, QWidgetAction
         from views.tray import DimensionStylePanel, ShadowsPanel, StylesPanel
         self.styles_panel = StylesPanel(self)
+        from PySide6.QtWidgets import QDockWidget
+        self.styles_dock = QDockWidget("Styles", self)
+        self.styles_dock.setObjectName("styles_dock")
+        self.styles_dock.setWidget(self.styles_panel)
+        self.styles_dock.setAllowedAreas(Qt.RightDockWidgetArea | Qt.LeftDockWidgetArea)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.styles_dock)
+        self.tabifyDockWidget(self.tray, self.styles_dock)
+        self.styles_dock.hide()
         self.shadows_panel = ShadowsPanel(self)
         self.dimstyle_panel = DimensionStylePanel(self)
         panels_tb = self._new_toolbar(tr("Panels"), "panels_toolbar")
@@ -542,6 +550,11 @@ class MainWindow(QMainWindow):
             btn = QToolButton(panels_tb)
             btn.setIcon(tool_icon(key))
             btn.setToolTip(f"{title}\n{tip}")
+            if key == "styles":
+                btn.clicked.connect(self._show_styles_panel)
+                panels_tb.addWidget(btn)
+                self._icon_actions.append((btn, key))
+                continue
             btn.setPopupMode(QToolButton.InstantPopup)
             btn.setStyleSheet(
                 "QToolButton::menu-indicator { image: none; }")
@@ -563,6 +576,10 @@ class MainWindow(QMainWindow):
         self.viewport.sceneVersionChanged.connect(
             lambda _v: self._on_surfaces_scene_changed())
         self.viewport.tilesChanged.connect(self._build_terrain)
+
+    def _show_styles_panel(self):
+        self.styles_panel.refresh()
+        self.set_tray_shown(self.styles_dock, True)
 
     def _new_toolbar(self, title: str, object_name: str) -> QToolBar:
         """A separate, independently draggable/floatable icons-only toolbar
@@ -1520,6 +1537,7 @@ class MainWindow(QMainWindow):
         return [d for d in (getattr(self, "tray", None),
                             getattr(self, "bim_tray", None),
                             getattr(self, "georef_tray", None),
+                            getattr(self, "styles_dock", None),
                             *getattr(self, "_extension_docks", ()))
                 if d is not None]
 
@@ -2870,6 +2888,10 @@ class MainWindow(QMainWindow):
     def _apply_display_style(self, preset) -> None:
         """Activate a built-in style (a COPY — presets stay pristine)."""
         self.viewport.scene.display_style = preset.copy()
+        for key in ("show_hidden_geometry", "show_hidden_objects", "show_section_planes", "show_section_cuts"):
+            setattr(self.viewport.scene, key, getattr(preset, key))
+        self.viewport.scene.version += 1
+        self._sync_section_menu()
         self._sync_style_menu()
         self.viewport.update()
         self.statusBar().showMessage(
@@ -6185,11 +6207,16 @@ class MainWindow(QMainWindow):
         scene = getattr(viewport, "scene", None)
         view = getattr(scene, "view_version", 0) if version >= 0 else 0
         self._saved_content = version - view
+        style = getattr(scene, "display_style", None)
+        self._saved_style = style.to_dict() if style is not None else None
 
     def _is_dirty(self) -> bool:
         if self._workspace is not None:
             return bool(self._workspace.is_dirty())
-        return self.viewport.scene.content_version != self._saved_content
+        style = getattr(self.viewport.scene, "display_style", None)
+        style_changed = (style is not None and getattr(self, "_saved_style", None) is not None
+                         and style.to_dict() != self._saved_style)
+        return self.viewport.scene.content_version != self._saved_content or style_changed
 
     def _on_scene_version_changed(self, _version: int) -> None:
         self._update_title()

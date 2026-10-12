@@ -13,6 +13,7 @@ uniform float u_opacity;
 // render as stipple dots around the figure; the dither stays for scene
 // cutouts (fences, leaves), which need it to survive minification.
 uniform int u_hard_cutout;
+uniform int u_material_transparency;
 // Per-run diffuse shade for textured faces (colour faces bake it into
 // their vertex colours) — 1.0 everywhere else (billboards, previews).
 uniform float u_shade;
@@ -152,7 +153,9 @@ void main() {
         // erase it; the Bayer pattern keeps that fraction of pixels, drawn
         // opaque, so distant fences stay visible as a faint weave.
         // Translucent runs (u_opacity < 1) blend instead of cutting.
-        if (u_opacity > 0.999 && texel.a < 0.5) {
+        if (u_material_transparency == 0) {
+            c = vec4(texel.rgb * u_shade, u_opacity);
+        } else if (u_opacity > 0.999 && texel.a < 0.5) {
             if (u_hard_cutout == 1) discard;
             int bx = int(mod(gl_FragCoord.x, 4.0));
             int by = int(mod(gl_FragCoord.y, 4.0));

@@ -429,6 +429,8 @@ def save_scene(scene, path: Path) -> dict:
         d = dstyle.to_dict()
         if d != Style().to_dict():   # default stays implicit (terse files)
             payload["display_style"] = d
+    if getattr(scene, "styles", None):
+        payload["styles"] = [style.to_dict() for style in scene.styles]
     shadows = getattr(scene, "shadows", None)
     if shadows is not None:
         from core.sun import ShadowSettings
@@ -836,6 +838,16 @@ def _load_into_inner(scene, path: Path, progress=None) -> None:
     # block must reset the field — otherwise the previous document's look or
     # sun leaks into the one being opened.
     from core.style import Style
+    scene.styles = [Style.from_dict(raw) for raw in payload.get("styles", [])
+                    if isinstance(raw, dict)] if isinstance(payload.get("styles", []), list) else []
+    if "styles" not in payload:
+        # Older models stored only the active look and scene snapshots.
+        migrated = {}
+        for view in scene.saved_views:
+            if view.style:
+                snapshot = Style.from_dict(view.style)
+                migrated[snapshot.uid or snapshot.name] = snapshot
+        scene.styles = list(migrated.values())
     dstyle = payload.get("display_style")
     scene.display_style = (Style.from_dict(dstyle)
                            if isinstance(dstyle, dict) else Style())

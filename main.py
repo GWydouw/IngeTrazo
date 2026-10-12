@@ -206,6 +206,9 @@ def _self_check() -> int:
     for label, path in (
         ("vertex shader", root / "resources" / "shaders" / "basic.vert"),
         ("fragment shader", root / "resources" / "shaders" / "basic.frag"),
+        ("style line vertex shader", root / "resources" / "shaders" / "style_line.vert"),
+        ("style line geometry shader", root / "resources" / "shaders" / "style_line.geom"),
+        ("style line fragment shader", root / "resources" / "shaders" / "style_line.frag"),
         ("translations", root / "i18n" / "es.json"),
         ("texture library", root / "resources" / "textures" / "library.json"),
         ("components", root / "resources" / "components" / "components.json"),

@@ -35,6 +35,8 @@ Tool input (when a tool is active):
 """
 from __future__ import annotations
 
+from core.appearance import ACCENT_RGB8, ACCENT_RGB, SELECTION_LINE_WIDTH
+
 import copy
 import itertools
 import math
@@ -348,24 +350,20 @@ XRAY_FACE_OPACITY = 0.6
 #: and you can tell which edges have a face in front of them.
 XRAY_HIDDEN_EDGE_FADE = 0.6
 
-#: Dot colour of a SELECTED face (the usual selection orange) and the one it
-#: switches to on a surface that is itself orange/red, where orange dots
-#: would vanish into the paint.
-SELECTION_DOT_COLOR = (0.95, 0.45, 0.16)
-SELECTION_DOT_ALT_COLOR = (0.10, 0.25, 0.85)
+#: Blue selection dots, with a light cyan alternative on saturated blue paint.
+SELECTION_DOT_COLOR = ACCENT_RGB
+SELECTION_DOT_ALT_COLOR = (0.25, 0.85, 1.0)
 
 
 def selection_dot_color(surface) -> tuple:
     """The dot colour that reads on a face side painted ``surface`` (an RGB
-    triple, or ``None`` when unknown, e.g. a texture): the selection orange,
-    unless the surface is orange-ish or red-ish itself (hue within ~50° of
-    red, with enough saturation and value to look coloured), where the dots
-    turn blue so a selected face still tells itself apart."""
+    triple, or ``None`` when unknown, e.g. a texture). Light cyan dots keep
+    saturated blue surfaces distinguishable from their selection pattern."""
     if surface is None:
         return SELECTION_DOT_COLOR
     import colorsys
     h, s, v = colorsys.rgb_to_hsv(*(float(c) for c in surface[:3]))
-    if s >= 0.35 and v >= 0.35 and (h <= 0.14 or h >= 0.96):
+    if s >= 0.35 and v >= 0.35 and 0.55 <= h <= 0.75:
         return SELECTION_DOT_ALT_COLOR
     return SELECTION_DOT_COLOR
 
@@ -1179,6 +1177,7 @@ class Viewport(QOpenGLWidget):
         self._loc_use_vcolor = self._program.uniformLocation("u_use_vcolor")
         self._loc_opacity = self._program.uniformLocation("u_opacity")
         self._loc_hard_cutout = self._program.uniformLocation("u_hard_cutout")
+        self._loc_material_transparency = self._program.uniformLocation("u_material_transparency")
         self._loc_shade = self._program.uniformLocation("u_shade")
         # Per-instance model matrix columns (P2 instanced components).
         self._loc_inst = [self._program.attributeLocation(f"a_inst{i}")
@@ -1322,6 +1321,11 @@ class Viewport(QOpenGLWidget):
         finally:
             self.doneCurrent()
 
+        painter = QPainter(image)
+        painter.scale(width_px / lw, height_px / lh)
+        self._paint_ambient_occlusion(painter)
+        self._paint_style_foreground(painter)
+        painter.end()
         if overlays:
             painter = QPainter(image)
             painter.setRenderHint(QPainter.Antialiasing, True)
@@ -1388,7 +1392,7 @@ class Viewport(QOpenGLWidget):
         # scene's active style drives faces, edges and background.
         style = self._effective_style()
         layer_colors = getattr(style, "color_by_layer", False)
-        layer_lines = layer_colors or any(
+        layer_lines = layer_colors or style.edge_color_mode == "by_material" or any(
             item.edge_color is not None or item.line_style is not None
             for item in (*self.scene.layers, *self.scene.layer_folders))
         mode = "layer" if layer_colors else style.face_mode
@@ -1445,18 +1449,21 @@ class Viewport(QOpenGLWidget):
         self._program.setUniformValue1f(self._loc_opacity, 1.0)
         self._program.setUniformValue1f(self._loc_shade, 1.0)
         self._program.setUniformValue(self._loc_hard_cutout, 0)
+        self._program.setUniformValue(self._loc_material_transparency, int(style.material_transparency))
         self._program.setUniformValue1f(self._loc_fade, 0.0)
 
         # Sky / ground backdrop with a horizon anchored to the camera pitch —
         # premium modeller feel. Fixed on zoom (it's the point at infinity),
         # moves only on orbit. Skipped over the base map / terrain (which supply
         # their own ground).
-        if (self.plano_style is None and style.sky
+        if (self.plano_style is None and (style.sky or style.ground)
                 and not self._base_map_showing()
                 and not self._terrain_showing()
                 and not self._photo_showing()):
             self._draw_sky(mvp)
             self._program.setUniformValue(self._loc_mvp, mvp)
+
+        self._draw_style_backdrops(mvp)
 
         # Base-map tiles (Track G) — the ground image, drawn before the grid so
         # the grid lines read on top of the imagery. Depth-write OFF: it's a
@@ -1589,7 +1596,7 @@ class Viewport(QOpenGLWidget):
                 # X-ray: translucent faces that do not occlude — edges stay
                 # fully visible because nothing writes depth.
                 self._program.setUniformValue1f(self._loc_opacity,
-                                                XRAY_FACE_OPACITY)
+                                                self._effective_style().xray_opacity)
                 self._gl.glDepthMask(GL_FALSE)
             self._faces_vao.bind()
             if split_f is None:
@@ -1681,7 +1688,7 @@ class Viewport(QOpenGLWidget):
             self._program.setUniformValue(self._loc_use_tex, 1)
             if mode == "xray":
                 self._program.setUniformValue1f(self._loc_opacity,
-                                                XRAY_FACE_OPACITY)
+                                                self._effective_style().xray_opacity)
                 self._gl.glDepthMask(GL_FALSE)
             self._tex_faces_vao.bind()
             run_parts = getattr(self, "_tex_run_parts", None)
@@ -1817,6 +1824,8 @@ class Viewport(QOpenGLWidget):
                              "hidden_line", "monochrome"):
             flat_translucency = mode in ("hidden_line", "monochrome")
             def set_run_opacity(alpha):
+                if not style.material_transparency:
+                    alpha = style.xray_opacity if mode == "xray" else 1.0
                 self._program.setUniformValue1f(self._loc_opacity, float(alpha))
                 if flat_translucency:
                     # Uniform-color faces carry alpha in their colors;
@@ -1828,7 +1837,7 @@ class Viewport(QOpenGLWidget):
                     self._program.setUniformValue(
                         self._loc_back_color, QVector4D(*back, float(alpha)))
 
-            self._gl.glDepthMask(GL_FALSE)
+            self._gl.glDepthMask(GL_FALSE if style.material_transparency or mode == "xray" else GL_TRUE)
             self._gl.glEnable(GL_POLYGON_OFFSET_FILL)
             self._gl.glPolygonOffset(1.0, 1.0)
             if self._tcol_runs or self._back_tcol_runs:
@@ -1851,7 +1860,7 @@ class Viewport(QOpenGLWidget):
                         # glass-backed front copy: front side only
                         self._gl.glEnable(GL_CULL_FACE)
                         self._gl.glCullFace(GL_BACK)
-                    self._gl.glDrawArrays(GL_TRIANGLES, start, count)
+                    self._draw_translucent_run(self._faces_vao, self._faces_vbo, 24, start, count)
                     if fc:
                         self._gl.glDisable(GL_CULL_FACE)
                 if self._back_tcol_runs:
@@ -1860,7 +1869,7 @@ class Viewport(QOpenGLWidget):
                     self._gl.glCullFace(GL_FRONT)
                     for a, start, count in self._back_tcol_runs:
                         set_run_opacity(a)
-                        self._gl.glDrawArrays(GL_TRIANGLES, start, count)
+                        self._draw_translucent_run(self._faces_vao, self._faces_vbo, 24, start, count)
                     self._gl.glDisable(GL_CULL_FACE)
                 self._faces_vao.release()
                 self._program.setUniformValue(self._loc_use_vcolor, 0)
@@ -1881,7 +1890,7 @@ class Viewport(QOpenGLWidget):
                         if fc:
                             self._gl.glEnable(GL_CULL_FACE)
                             self._gl.glCullFace(GL_BACK)
-                        self._gl.glDrawArrays(GL_TRIANGLES, start, count)
+                        self._draw_translucent_run(self._tex_faces_vao, self._tex_faces_vbo, 20, start, count)
                         if fc:
                             self._gl.glDisable(GL_CULL_FACE)
                     if self._back_ttex_runs:
@@ -1889,7 +1898,7 @@ class Viewport(QOpenGLWidget):
                         self._gl.glCullFace(GL_FRONT)
                         for _run, a, start, count in self._back_ttex_runs:
                             set_run_opacity(a)
-                            self._gl.glDrawArrays(GL_TRIANGLES, start, count)
+                            self._draw_translucent_run(self._tex_faces_vao, self._tex_faces_vbo, 20, start, count)
                         self._gl.glDisable(GL_CULL_FACE)
                 else:
                     self._program.setUniformValue(self._loc_use_tex, 1)
@@ -1903,7 +1912,7 @@ class Viewport(QOpenGLWidget):
                             self._gl.glEnable(GL_CULL_FACE)
                             self._gl.glCullFace(GL_BACK)
                         tex.bind(0)
-                        self._gl.glDrawArrays(GL_TRIANGLES, start, count)
+                        self._draw_translucent_run(self._tex_faces_vao, self._tex_faces_vbo, 20, start, count)
                         tex.release(0)
                         if fc:
                             self._gl.glDisable(GL_CULL_FACE)
@@ -2001,7 +2010,7 @@ class Viewport(QOpenGLWidget):
         # stays stable across zoom. Depth-write OFF so the ground axes don't cull
         # geometry sitting on z=0; drawn BEFORE user edges so an edge along an
         # axis wins the LEQUAL depth test. Rubber-band stays on top (drawn last).
-        if self.plano_style is None and self.style_override is None:
+        if self.plano_style is None and self.style_override is None and style.show_axes:
             # No axes on a plan sheet / styled composer frame.
             spacing = max(self.camera.distance * 0.008, 1e-4)
             axes_coords, self._axes_spans = _axes_vertices(spacing)
@@ -2028,7 +2037,7 @@ class Viewport(QOpenGLWidget):
         # a plan sheet or a styled composer frame — a printed lámina does
         # not carry the scaffolding, and that is also how it behaved before.
         if (self.plano_style is None and self.style_override is None
-                and getattr(self.scene, "guides", None)):
+                and style.show_guides and getattr(self.scene, "guides", None)):
             dist = max(float(self.camera.distance), 1e-3)
             g_coords, g_spans = _guide_vertices(
                 self.scene.guides, dist * 0.03, self.scene.selection,
@@ -2042,10 +2051,17 @@ class Viewport(QOpenGLWidget):
                 self._gl.glDepthMask(GL_FALSE)
                 for start, count, selected in g_spans:
                     if selected:
-                        self._set_color(0.95, 0.45, 0.16, 1.0)   # selection
+                        self._draw_selection_lines(self._guides_vao, count, mvp,
+                                                   first=start)
+                        self._guides_vao.bind()
+                        self._gl.glDepthMask(GL_FALSE)
                     else:
-                        self._set_color(0.27, 0.35, 0.47, 1.0)
-                    self._gl.glDrawArrays(GL_LINES, start, count)
+                        color = self.construction_line_color()
+                        self._draw_selection_lines(
+                            self._guides_vao, count, mvp, first=start,
+                            color=(color.redF(), color.greenF(), color.blueF()), width=2)
+                        self._guides_vao.bind()
+                        self._gl.glDepthMask(GL_FALSE)
                 self._gl.glDepthMask(GL_TRUE)
                 self._guides_vao.release()
 
@@ -2096,6 +2112,7 @@ class Viewport(QOpenGLWidget):
                             (tuple(ec[:3]), False))
         else:
             _edge_passes = ((tuple(ec[:3]), False),)
+        self._begin_style_lines(style, mvp, w, h)
         for (_ecol, _hidden), (_dx, _dy) in (
                 (_p, _j) for _p in _edge_passes for _j in _jit_e):
             if xray_edges:
@@ -2157,26 +2174,33 @@ class Viewport(QOpenGLWidget):
             sil_count = self._upload_silhouette_edges()
             if sil_count > 0:
                 self._set_color(ec[0], ec[1], ec[2], 1.0)
+                scale = w / max(self.width(), 1) if self._export_size else self.devicePixelRatioF()
+                if self._style_line_active:
+                    self._program.setUniformValue1f("u_line_width", float(style.profile_width * scale))
                 self._silhouette_vao.bind()
                 for _dx, _dy in _jit_p:
                     if _dx or _dy:
                         self._program.setUniformValue(
                             self._loc_mvp, _shifted_mvp(mvp, _dx, _dy))
-                    self._gl.glDrawArrays(GL_LINES, 0, sil_count)
+                    if self._style_line_active:
+                        self._gl.glDrawArrays(GL_LINES, 0, sil_count)
+                    else:
+                        profile_mvp = _shifted_mvp(mvp, _dx, _dy) if _dx or _dy else mvp
+                        self._draw_selection_lines(self._silhouette_vao, sil_count, profile_mvp,
+                                                   color=tuple(ec), width=style.profile_width)
+                        self._silhouette_vao.bind()
                 self._silhouette_vao.release()
                 if len(_jit_p) > 1:
                     self._program.setUniformValue(self._loc_mvp, mvp)
+        self._end_style_lines()
         _fmark("edges")
 
         # Selected edges (drawn on top, highlighted) — never in an export
         if self._selected_count > 0 and self._export_size is None:
-            self._set_color(0.95, 0.45, 0.16, 1.0)
-            self._selected_vao.bind()
-            self._gl.glDrawArrays(GL_LINES, 0, self._selected_count)
-            self._selected_vao.release()
+            self._draw_selection_lines(self._selected_vao, self._selected_count, mvp)
 
         # Hovered edge — light blue, on top of everything else so it reads as
-        # the pick candidate even when it overlaps a selected (orange) edge.
+        # the pick candidate even when it overlaps a selected (blue) edge.
         # A curve segment highlights its whole contour (what a click selects).
         if isinstance(self._hover_entity, Edge):
             hover_count = self._upload_hover_edge(self._hover_entity)
@@ -2207,6 +2231,9 @@ class Viewport(QOpenGLWidget):
         self._program.release()
 
         if self._export_size is not None:
+            self._depth_snap = None
+            if style.ambient_occlusion:
+                self._capture_depth(w, h)
             # Hi-res export: the scene stays in the FBO for render_image to
             # read back; the widget blit and its QPainter overlay don't apply.
             self._scene_fbo.release()
@@ -2216,7 +2243,7 @@ class Viewport(QOpenGLWidget):
         # annotations (dimensions, leader texts), which ask «is this point
         # hidden?» for every sample of every line — see _occluded_on_screen.
         self._depth_snap = None
-        if self._annotations_need_depth():
+        if self._annotations_need_depth() or style.ambient_occlusion:
             self._capture_depth(w, h)
         # What the scene FBO now holds: the depth under the cursor can be
         # read from it while the camera stays here (``_depth_world_at``).
@@ -2273,6 +2300,57 @@ class Viewport(QOpenGLWidget):
             self._perf_stat = st
 
     # ---- Setup helpers ------------------------------------------------------
+    def _begin_style_lines(self, style, mvp, w, h):
+        self._style_line_active = bool(style.extensions or style.endpoints or style.depth_cue
+                                       or style.edge_color_mode == "by_axis")
+        if not self._style_line_active:
+            return
+        program = getattr(self, "_style_line_program", None)
+        if program is None:
+            program = QOpenGLShaderProgram(self)
+            root = app_root() / "resources/shaders"
+            for kind, name in ((QOpenGLShader.Vertex, "vert"),
+                               (QOpenGLShader.Geometry, "geom"),
+                               (QOpenGLShader.Fragment, "frag")):
+                if not program.addShaderFromSourceFile(kind, str(root / ("style_line." + name))):
+                    raise RuntimeError(program.log())
+            if not program.link():
+                raise RuntimeError(program.log())
+            self._style_line_program = program
+        names = {"_loc_mvp": "u_mvp", "_loc_color": "u_color",
+                 "_loc_back_color": "u_color", "_loc_fade": "u_fade",
+                 "_loc_fade_color": "u_fade_color", "_loc_stipple": "u_stipple",
+                 "_loc_viewport_px": "u_viewport_px", "_loc_dash_px": "u_dash_px",
+                 "_loc_clip_plane": "u_clip_plane", "_loc_clip_enable": "u_clip_enable",
+                 "_loc_use_tex": "u_unused", "_loc_use_vcolor": "u_unused"}
+        self._style_line_restore = (self._program, {key: getattr(self, key) for key in names})
+        self._program = program
+        for key, name in names.items():
+            setattr(self, key, program.uniformLocation(name))
+        program.bind()
+        program.setUniformValue(self._loc_mvp, mvp)
+        program.setUniformValue(self._loc_viewport_px, QVector2D(float(w), float(h)))
+        program.setUniformValue(self._loc_fade_color, QVector3D(*style.background))
+        program.setUniformValue1f(self._loc_fade, 0.0)
+        program.setUniformValue(self._loc_stipple, 0)
+        scale = (w / max(self.width(), 1) if self._export_size else self.devicePixelRatioF())
+        program.setUniformValue1f("u_line_width", float(scale))
+        program.setUniformValue1f("u_extension", float(style.extension_length * scale if style.extensions else 0))
+        program.setUniformValue1f("u_endpoint", float(style.endpoint_size * scale if style.endpoints else 0))
+        program.setUniformValue1f("u_depth_width", float(style.depth_cue_width * scale if style.depth_cue else 0))
+        program.setUniformValue("u_eye", self.camera.eye())
+        program.setUniformValue1f("u_distance", float(self.camera.distance))
+        program.setUniformValue("u_axis_color", int(style.edge_color_mode == "by_axis"))
+        self._set_section_clip(True)
+
+    def _end_style_lines(self):
+        if not self._style_line_active:
+            return
+        self._program, locations = self._style_line_restore
+        for key, value in locations.items():
+            setattr(self, key, value)
+        self._program.bind()
+
     def _compile_program(self) -> QOpenGLShaderProgram:
         prog = QOpenGLShaderProgram(self)
         ok_v = prog.addShaderFromSourceFile(
@@ -3043,7 +3121,7 @@ class Viewport(QOpenGLWidget):
         vao.bind()
         for color, opacity, faded, start, count in getattr(self, slot + "_runs"):
             if style.face_mode == "xray":
-                opacity *= XRAY_FACE_OPACITY
+                opacity *= style.xray_opacity
             self._gl.glDepthMask(GL_FALSE if tint or opacity < .999 else GL_TRUE)
             self._set_color(*color, opacity)
             self._program.setUniformValue(self._loc_back_color, QVector4D(*color, opacity))
@@ -3058,7 +3136,7 @@ class Viewport(QOpenGLWidget):
         """Draw inherited line overrides without a solid underlay."""
         from core.layer_display import layer_line_buffers
         default = (0.0, 0.0, 0.0) if style.color_by_layer else tuple(style.edge_color)
-        key = (_cache_ver(self), self._placements_epoch(), default,
+        key = (_cache_ver(self), self._placements_epoch(), default, style.edge_color_mode,
                tuple((ly.name, ly.folder_id, ly.edge_color, ly.line_style)
                      for ly in self.scene.layers),
                tuple((f.uid, f.parent_id, f.edge_color, f.line_style)
@@ -3068,7 +3146,7 @@ class Viewport(QOpenGLWidget):
         if getattr(self, "_layer_line_key", None) != key:
             data, self._layer_line_runs = layer_line_buffers(
                 self.scene, default, self._edit_rest_mode,
-                getattr(self, "_preview_groups", None) or ())
+                getattr(self, "_preview_groups", None) or (), color_mode=style.edge_color_mode)
             self._layer_lines_vbo.bind()
             self._layer_lines_vbo.allocate(data, len(data))
             self._layer_lines_vbo.release()
@@ -3082,7 +3160,7 @@ class Viewport(QOpenGLWidget):
         for color, pattern, faded, start, count in self._layer_line_runs:
             if back_edges and pattern == "solid":
                 pattern = "dashed"
-            stipple = {"solid": 0, "dashed": 4, "dotted": 5}[pattern]
+            stipple = {"solid": 0, "dashed": 4, "dotted": 5}[pattern] if style.dashes else 0
             self._program.setUniformValue(self._loc_stipple, stipple)
             self._program.setUniformValue1f(
                 self._loc_dash_px, (3.0 if pattern == "dotted" else 4.0) * dpr)
@@ -3107,7 +3185,7 @@ class Viewport(QOpenGLWidget):
         self._gl.glPolygonOffset(1.0, 1.0)
         if mode == "xray":
             self._program.setUniformValue1f(self._loc_opacity,
-                                            XRAY_FACE_OPACITY)
+                                            self._effective_style().xray_opacity)
             self._gl.glDepthMask(GL_FALSE)
         for mesh, paint, groups, mirrored in by_proto.values():
             entry = self._ensure_proto_draw(mesh, paint)
@@ -3211,6 +3289,50 @@ class Viewport(QOpenGLWidget):
                     extra.glDrawArraysInstanced(GL_TRIANGLES, s0, cnt, n)
                 entry["tex_vao"].release()
 
+    def _draw_translucent_run(self, vao, vbo, stride, first, count):
+        """Nicer transparency sorts a material run back-to-front per camera.
+
+        Faster keeps the existing batched draws. Sorted buffers are cached for
+        the current geometry and camera; moving the camera invalidates them.
+        """
+        style = self._frame_style
+        if style.transparency_quality != "nicer" or not style.material_transparency:
+            self._gl.glDrawArrays(GL_TRIANGLES, first, count)
+            return
+        import numpy as np
+        key = (_cache_ver(self), tuple(self.camera.view_matrix().data()))
+        cache = getattr(self, "_nice_transparency_cache", None)
+        if cache is None or cache[0] != key:
+            cache = self._nice_transparency_cache = (key, {})
+        run_key = (vbo.bufferId(), stride, first, count)
+        raw = cache[1].get(run_key)
+        if raw is None:
+            slot = "tex" if stride == 20 else "faces"
+            source_key = ("source", slot)
+            source = cache[1].get(source_key)
+            if source is None:
+                source = b"".join(self._vbo_parts[slot][0])
+                cache[1][source_key] = source
+            source = source[first*stride:(first+count)*stride]
+            vertices = np.frombuffer(source, dtype=np.float32).reshape(-1,3,stride//4)
+            eye = np.array(self.camera.eye().toTuple())
+            forward = np.array(self.camera.forward().toTuple())
+            depth = (vertices[:,:,:3].mean(axis=1)-eye) @ forward
+            raw = vertices[np.argsort(-depth, kind="stable")].tobytes()
+            cache[1][run_key] = raw
+        name = "_nice_uv" if stride == 20 else "_nice_vcol"
+        if not hasattr(self,name):
+            setattr(self,name,self._create_dynamic_uv() if stride == 20 else self._create_dynamic_vcol())
+        scratch_vao, scratch_vbo = getattr(self,name)
+        self._program.bind()
+        scratch_vbo.bind()
+        scratch_vbo.allocate(raw,len(raw))
+        scratch_vbo.release()
+        scratch_vao.bind()
+        self._gl.glDrawArrays(GL_TRIANGLES,0,count)
+        scratch_vao.release()
+        vao.bind()
+
     def _draw_back_edges(self, color, w: int, h: int) -> None:
         """Back Edges (K, issue #234): the edges a face hides, dashed, over
         the opaque model — where a bar or a frame member continues behind
@@ -3222,7 +3344,7 @@ class Viewport(QOpenGLWidget):
         self._program.setUniformValue(self._loc_viewport_px,
                                       QVector2D(float(w), float(h)))
         self._program.setUniformValue1f(self._loc_dash_px, 4.0 * dpr)
-        self._program.setUniformValue(self._loc_stipple, 4)
+        self._program.setUniformValue(self._loc_stipple, 4 if self._frame_style.dashes else 0)
         self._gl.glDepthFunc(GL_GREATER)
         self._gl.glDepthMask(GL_FALSE)
         self._set_color(*color, 1.0)
@@ -3438,13 +3560,13 @@ class Viewport(QOpenGLWidget):
         return best
 
     def _draw_image_outlines(self, painter: QPainter) -> None:
-        """Border of each reference image: faint normally, selection orange
+        """Border of each reference image: faint normally, selection blue
         when picked, so an image lying flat on the ground is still findable."""
         images = getattr(self.scene, "image_planes", None)
         if not images:
             return
         pen = QPen(QColor(120, 140, 165), 1, Qt.DashLine)
-        sel_pen = QPen(QColor(243, 115, 41), 2)      # selection orange
+        sel_pen = QPen(QColor.fromRgbF(*self._effective_style().selected_color), SELECTION_LINE_WIDTH)      # selection blue
         selection = self.scene.selection
         for im in images:
             if not self.scene.entity_visible(im):
@@ -3565,6 +3687,9 @@ class Viewport(QOpenGLWidget):
         else:
             back = effective_back_color(
                 getattr(self.scene, "display_style", None), self.scene)
+        color = self._effective_style().selected_color
+        if color != ACCENT_RGB:
+            return color, color
         return selection_dot_color(front), selection_dot_color(back)
 
     def _set_back_face_color(self) -> None:
@@ -3606,7 +3731,50 @@ class Viewport(QOpenGLWidget):
                 round(min(1.0, base[1] * shade) * 64.0) / 64.0,
                 round(min(1.0, base[2] * shade) * 64.0) / 64.0)
 
-    # ---- Line weight for exports --------------------------------------------
+    # ---- Line weights -------------------------------------------------------
+    construction_color_key = "display/construction_line_color"
+    construction_color_default = "#465a78"
+
+    def construction_line_color(self):
+        from PySide6.QtCore import QSettings
+        picked = getattr(self._effective_style(), "guide_color", None) if hasattr(self, "_effective_style") else None
+        if picked is not None:
+            return QColor.fromRgbF(*picked)
+        color = QColor(str(QSettings().value(
+            self.construction_color_key, self.construction_color_default)))
+        return color if color.isValid() else QColor(self.construction_color_default)
+
+    def _draw_selection_lines(self, vao, count, mvp, first=0,
+                              color=ACCENT_RGB, width=SELECTION_LINE_WIDTH) -> None:
+        """Three logical pixels even on drivers that clamp GL lines to one.
+
+        Shift in screen space, preserving depth and clipping. Restore the MVP
+        and depth-write state so later overlays keep their normal rendering.
+        """
+        export_size = getattr(self, "_export_size", None)
+        w, h = export_size or self._fb_size()
+        scale = export_size[0]/max(self.width(),1) if export_size else self.devicePixelRatioF()
+        if color == ACCENT_RGB and hasattr(self, "_effective_style"):
+            style = self._effective_style()
+            locked = any(isinstance(entity, Group) and self.scene.group_locked(entity)
+                         for entity in self.scene.selection)
+            color = style.locked_color if locked else style.selected_color
+        self._set_color(*color, 1.0)
+        self._gl.glDepthMask(GL_FALSE)
+        vao.bind()
+        pixels = max(1, round(width * scale))
+        radius = (pixels - 1) / 2
+        offsets = [-radius + i for i in range(pixels)]
+        for dx, dy in ((x, y) for x in offsets for y in offsets
+                       if x*x + y*y <= radius*radius + 0.51):
+            self._program.setUniformValue(
+                self._loc_mvp, _shifted_mvp(mvp, dx * 2 / max(w, 1),
+                                          dy * 2 / max(h, 1)))
+            self._gl.glDrawArrays(GL_LINES, first, count)
+        vao.release()
+        self._program.setUniformValue(self._loc_mvp, mvp)
+        self._gl.glDepthMask(GL_TRUE)
+
     def _line_jitter(self, px: int, w: int, h: int) -> list:
         """NDC offsets that thicken a 1-px GL line to about ``px`` pixels by
         redrawing it shifted — a disc of sub-pixel samples (2 px = the four
@@ -3742,6 +3910,11 @@ class Viewport(QOpenGLWidget):
                     if tex is not None:
                         tex.destroy()
                 cache.clear()
+            style_textures = getattr(self, "_style_texture_cache", None)
+            if style_textures:
+                for texture in style_textures.values():
+                    texture.destroy()
+                style_textures.clear()
             tiles = getattr(self, "_tile_textures", None)
             if tiles:
                 for tex in tiles.values():
@@ -4121,15 +4294,19 @@ class Viewport(QOpenGLWidget):
 
         self._sky_grad_vao.bind()
         self._program.setUniformValue(self._loc_use_vcolor, 1)
-        if hy < 1.0:
+        if getattr(style, "horizon_color", None) is not None:
+            c_sky0 = c_gnd0 = c_line = style.horizon_color
+        if hy < 1.0 and style.sky:
             gquad(hy, 1.0, c_sky0, c_sky1)
-        if hy > -1.0:
-            gquad(-1.0, hy, c_gnd1, c_gnd0)
+        if hy > -1.0 and style.ground and (style.show_ground_below or self.camera.eye().z() >= 0):
+            def blend(color):
+                return tuple(style.background[i] * (1-style.ground_opacity) + color[i] * style.ground_opacity for i in range(3))
+            gquad(-1.0, hy, blend(c_gnd1), blend(c_gnd0))
         self._program.setUniformValue(self._loc_use_vcolor, 0)
         self._sky_grad_vao.release()
         # A subtle horizon line where sky meets ground, in a tone
         # derived from the two haze colours so custom skies keep it legible.
-        if -1.0 < hy < 1.0:
+        if -1.0 < hy < 1.0 and (style.sky or style.ground):
             line = array("f", [-1.0, hy, 0.0, 1.0, hy, 0.0])
             self._sky_vao.bind()
             self._sky_vbo.bind()
@@ -4641,10 +4818,7 @@ class Viewport(QOpenGLWidget):
             self._program.setUniformValue(self._loc_use_tex, 0)
         n = getattr(self, "_pv_edges_count", 0)
         if n:
-            self._set_color(1.0, 0.45, 0.0, 1.0)   # selection orange: moving
-            self._pv_edges_vao.bind()
-            self._gl.glDrawArrays(GL_LINES, 0, n)
-            self._pv_edges_vao.release()
+            self._draw_selection_lines(self._pv_edges_vao, n, mvp * m)
         self._program.setUniformValue(self._loc_mvp, mvp)
 
     # ---- Hidden things shown (View ▸ Hidden Objects / Geometry) ------------
@@ -4869,16 +5043,20 @@ class Viewport(QOpenGLWidget):
 
     def _sync_edges(self) -> None:
         from core.layers import DEFAULT_LAYER
-        layer_colors = bool(getattr(self._effective_style(), "color_by_layer", False))
+        style = self._effective_style()
+        layer_colors = bool(getattr(style, "color_by_layer", False))
+        palette = tuple(style.selected_color)
         if (_cache_ver(self) == self._edges_version
-                and getattr(self, "_edges_layer_colors", None) == layer_colors):
+                and getattr(self, "_edges_layer_colors", None) == layer_colors
+                and getattr(self, "_edges_selection_palette", None) == palette):
             return
         self._edges_layer_colors = layer_colors
+        self._edges_selection_palette = palette
         _st0 = _time_mod.perf_counter() if _PERF else 0.0
 
         # The scene changed: purge hover/selection references to entities that
         # no longer exist, or deleted geometry keeps ghost-rendering (blue
-        # hover / orange selection) until the mouse moves or a click replaces
+        # hover / blue selection) until the mouse moves or a click replaces
         # the selection. Renderer-level guarantee — holds no matter which
         # command forgot to discard. Membership is checked per candidate
         # (identity scans in C) instead of materialising 300k-entity sets;
@@ -5036,6 +5214,11 @@ class Viewport(QOpenGLWidget):
             if isinstance(ent, Edge):
                 sel_loose.extend([ent.a.x(), ent.a.y(), ent.a.z(),
                                   ent.b.x(), ent.b.y(), ent.b.z()])
+            elif isinstance(ent, Face):
+                for loop in [ent.loop] + list(ent.hole_loops):
+                    for i, vertex in enumerate(loop):
+                        a, b = vertex.position, loop[(i + 1) % len(loop)].position
+                        sel_loose.extend((a.x(), a.y(), a.z(), b.x(), b.y(), b.z()))
             elif isinstance(ent, Group):
                 if getattr(ent, "billboard", False):
                     # A face-me billboard's mesh quad is NOT what's on screen
@@ -5046,19 +5229,20 @@ class Viewport(QOpenGLWidget):
                     continue
                 if id(ent) in pv:
                     # Mid Move/Rotate drag: the scratch preview draws the
-                    # mover WITH its own orange cue at the cursor — tinting
-                    # the chunk here left an orange GHOST at the origin
+                    # mover WITH its own blue cue at the cursor — tinting
+                    # the chunk here left an blue GHOST at the origin
                     # until the commit (user report).
                     continue
-                # A selected group reads as its BOUNDING BOX, the way
-                # modellers usually show one — twelve segments instead of the whole
-                # object. Highlighting the geometry meant uploading every
-                # edge AND a triangle copy of every face on each click: the
-                # 230k-face hedge in piscina.igz pushed 416k edges through
-                # the selection buffers just to say "this is selected". The
-                # box also reads better on a dense group, where an all-orange
-                # mass says less than an outline does.
+                # Keep the container box and highlight its actual edges below.
+                # Reuse cached line chunks; never triangulate selected groups.
                 sel_edge_parts.append(_box_edges(*self._group_obb(ent)))
+        selected_groups = {ent for ent in self.scene.selection
+                           if isinstance(ent, Group) and id(ent) not in pv}
+        for g in draw_groups:
+            if ((g in selected_groups or getattr(g, "owner", None) in selected_groups)
+                    and self.scene.entity_visible(g) and id(g) not in pv
+                    and not getattr(g, "billboard", False)):
+                sel_edge_parts.append(self._group_chunk(g)["edges"])
         self._selected_count = self._upload_vbo(
             self._selected_vbo, "sel_edges",
             [sel_loose.tobytes()] + sel_edge_parts) // 12
@@ -5609,7 +5793,7 @@ class Viewport(QOpenGLWidget):
         self._program.setUniformValue(self._loc_use_tex, 0)
 
     def _draw_billboard_outlines(self) -> None:
-        """Selection cue for face-me billboards: an orange outline around the
+        """Selection cue for face-me billboards: a blue outline around the
         quad AS DRAWN this frame (it rotates toward the camera). Tinting the
         group's static mesh painted a stray plane through the figure —
         the usual convention shows a selected 2D person as an outlined box too."""
@@ -5633,10 +5817,8 @@ class Viewport(QOpenGLWidget):
         self._bb_sel_vbo.bind()
         self._bb_sel_vbo.allocate(raw, len(raw))
         self._bb_sel_vbo.release()
-        self._set_color(0.95, 0.45, 0.16, 1.0)  # selection orange
-        self._bb_sel_vao.bind()
-        self._gl.glDrawArrays(GL_LINES, 0, len(data) // 3)
-        self._bb_sel_vao.release()
+        mvp = self.camera.projection_matrix() * self.camera.view_matrix()
+        self._draw_selection_lines(self._bb_sel_vao, len(data) // 3, mvp)
 
     def _faceme_base(self, g):
         """Cached base data of a mesh face-me billboard: interleaved pos+uv
@@ -5790,6 +5972,32 @@ class Viewport(QOpenGLWidget):
             self._hover_faces_vbo.allocate(24)
         self._hover_faces_vbo.release()
         return len(data) // 3
+
+    def _hard_profile_vertices(self):
+        from core.style_effects import profile_mesh_data, profile_segments
+        from core.layer_display import _display_meshes, _transformed_vertices
+        key = _cache_ver(self)
+        cache = getattr(self, "_hard_profile_cache", None)
+        if cache is None or cache[0] != key:
+            cache = self._hard_profile_cache = (key,{})
+        parts = []
+        for mesh,matrix,tag,context in _display_meshes(
+                self.scene,self._edit_rest_mode,getattr(self,"_preview_groups",None) or ()):
+            if id(mesh) not in cache[1]:
+                cache[1][id(mesh)] = profile_mesh_data(mesh,self.scene.entity_visible)
+            data = cache[1][id(mesh)]
+            if data is None:
+                continue
+            eye = self.camera.eye()
+            if matrix is not None:
+                inverse,ok = matrix.inverted()
+                if not ok:
+                    continue
+                eye = inverse.map(eye)
+            segments = profile_segments(data,eye.toTuple())
+            if len(segments):
+                parts.append(_transformed_vertices(segments.reshape(-1,3),matrix))
+        return b"".join(parts)
 
     def _upload_silhouette_edges(self) -> int:
         """Upload the *profile* edges into the silhouette VBO and return the
@@ -5945,6 +6153,7 @@ class Viewport(QOpenGLWidget):
                 mask = ch["soft_single"] | ((s0 < 0) != (s1 < 0))
                 if mask.any():
                     chunks.append(ch["soft_pts"][mask].tobytes())
+        chunks.append(self._hard_profile_vertices())
         raw = b"".join(chunks)
         self._silhouette_vbo.bind()
         if raw:
@@ -6258,7 +6467,7 @@ class Viewport(QOpenGLWidget):
         elif snap is not None and snap.kind == "close":
             color = (0.20, 0.40, 0.78, 0.95)
         else:
-            color = (0.95, 0.45, 0.16, 0.85)
+            color = (*ACCENT_RGB, 0.85)
 
         # Depth-tested previews (Push/Pull, Offset, Paste) read like real
         # geometry and need GL hidden-line removal — draw them via GL. The
@@ -6305,7 +6514,7 @@ class Viewport(QOpenGLWidget):
                  and hasattr(tool, "guide_preview_lines") else [])
         if not lines:
             return
-        pen = QPen(QColor(70, 90, 120), 1.5, Qt.DashLine)
+        pen = QPen(self.construction_line_color(), 2, Qt.DashLine)
         pen.setDashPattern([10.0, 7.0])
         painter.setPen(pen)
         for p0, p1 in lines:
@@ -6314,10 +6523,135 @@ class Viewport(QOpenGLWidget):
                 painter.drawLine(QPointF(*q[0]), QPointF(*q[1]))
 
     # ---- 2D overlay (QPainter on top of OpenGL) -----------------------------
+    def _style_image(self, encoded):
+        import base64
+        from PySide6.QtGui import QImage
+        cache = getattr(self, "_style_image_cache", None)
+        if cache is None:
+            cache = self._style_image_cache = {}
+        if encoded not in cache:
+            image = QImage()
+            try:
+                image.loadFromData(base64.b64decode(encoded, validate=True))
+            except (ValueError, TypeError):
+                pass
+            if len(cache) > 16:
+                cache.clear()
+            cache[encoded] = image
+        return cache[encoded]
+
+    def _style_image_entries(self, foreground):
+        style = self._effective_style()
+        entries = []
+        if style.display_watermarks:
+            entries = [mark for mark in style.watermarks
+                       if (mark.get("layer", "overlay") != "background") == foreground]
+        photo = style.foreground_photo if foreground else style.background_photo
+        if photo and style.photo_image:
+            entries = [dict(image=style.photo_image, position="stretch", scale=1,
+                            opacity=style.foreground_photo_opacity if foreground else style.background_photo_opacity)] + entries
+        return entries
+
+    def _style_image_rects(self, mark, image, w, h):
+        from core.style_effects import image_rect
+        x, y, iw, ih = image_rect(image.width(), image.height(), w, h,
+                                mark.get("position", "bottom_right"), mark.get("scale", .25))
+        if mark.get("position") == "tile":
+            for iy in range(math.ceil(h/ih)):
+                for ix in range(math.ceil(w/iw)):
+                    yield QRectF(ix*iw, iy*ih, iw, ih)
+        else:
+            yield QRectF(x,y,iw,ih)
+
+    def _draw_style_backdrops(self, mvp):
+        entries = self._style_image_entries(False)
+        if not entries:
+            return
+        from PySide6.QtOpenGL import QOpenGLTexture
+        if not hasattr(self, "_style_backdrop_vao"):
+            self._style_backdrop_vao, self._style_backdrop_vbo = self._create_dynamic_uv()
+        self._program.bind()
+        self._program.setUniformValue(self._loc_mvp, QMatrix4x4())
+        self._program.setUniformValue(self._loc_use_tex, 1)
+        self._gl.glDisable(GL_DEPTH_TEST)
+        self._gl.glDepthMask(GL_FALSE)
+        self._style_backdrop_vao.bind()
+        for mark in entries:
+            image = self._style_image(mark.get("image", ""))
+            if image.isNull():
+                continue
+            cache = getattr(self, "_style_texture_cache", None)
+            if cache is None:
+                cache = self._style_texture_cache = {}
+            encoded = mark.get("image", "")
+            if encoded not in cache:
+                if len(cache) > 16:
+                    for old_texture in cache.values():
+                        old_texture.destroy()
+                    cache.clear()
+                cache[encoded] = QOpenGLTexture(image.mirrored())
+            texture = cache[encoded]
+            texture.bind(0)
+            self._program.setUniformValue1f(self._loc_opacity, float(mark.get("opacity", .5)))
+            for rect in self._style_image_rects(mark,image,self.width(),self.height()):
+                x0, x1 = rect.left()/self.width()*2-1, rect.right()/self.width()*2-1
+                y0, y1 = 1-rect.bottom()/self.height()*2, 1-rect.top()/self.height()*2
+                raw = array("f", [x0,y0,0,0,0, x1,y0,0,1,0, x1,y1,0,1,1,
+                                  x0,y0,0,0,0, x1,y1,0,1,1, x0,y1,0,0,1]).tobytes()
+                self._style_backdrop_vbo.bind()
+                self._style_backdrop_vbo.allocate(raw,len(raw))
+                self._style_backdrop_vbo.release()
+                self._gl.glDrawArrays(GL_TRIANGLES,0,6)
+            texture.release()
+        self._style_backdrop_vao.release()
+        self._gl.glDepthMask(GL_TRUE)
+        self._gl.glEnable(GL_DEPTH_TEST)
+        self._program.setUniformValue(self._loc_use_tex,0)
+        self._program.setUniformValue1f(self._loc_opacity,1.)
+        self._program.setUniformValue(self._loc_mvp,mvp)
+
+    def _paint_style_foreground(self, painter):
+        painter.save()
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        for mark in self._style_image_entries(True):
+            image = self._style_image(mark.get("image", ""))
+            if image.isNull():
+                continue
+            painter.setOpacity(float(mark.get("opacity", .5)))
+            for rect in self._style_image_rects(mark,image,self.width(),self.height()):
+                painter.drawImage(rect,image)
+        painter.restore()
+
+    def _paint_ambient_occlusion(self, painter):
+        style = self._effective_style()
+        snap = getattr(self, "_depth_snap", None)
+        if not style.ambient_occlusion or snap is None or style.face_mode in ("xray", "wireframe"):
+            return
+        import numpy as np
+        from PySide6.QtGui import QImage
+        from core.style_effects import ambient_occlusion
+        inv, ok = self.camera.projection_matrix().inverted()
+        if not ok:
+            return
+        alpha = ambient_occlusion(snap[0], np.array(inv.data()).reshape(4,4).T,
+                                  style.ao_distance, style.ao_intensity, style.ao_multiplier)
+        pixels = np.zeros((*alpha.shape,4),dtype=np.uint8)
+        color = (0,0,0) if style.ao_default_color else style.ao_color
+        pixels[:,:,:3] = [round(c*255) for c in color]
+        pixels[:,:,3] = alpha
+        image = QImage(pixels.data,alpha.shape[1],alpha.shape[0],pixels.strides[0],QImage.Format_RGBA8888).copy()
+        painter.save()
+        painter.setRenderHint(QPainter.SmoothPixmapTransform,True)
+        painter.drawImage(QRectF(0,0,self.width(),self.height()),image)
+        painter.restore()
+
     def _draw_overlay(self) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setRenderHint(QPainter.TextAntialiasing, True)
+
+        self._paint_ambient_occlusion(painter)
+        self._paint_style_foreground(painter)
 
         # Rubber band for the "always on top" tools (Line/Rectangle/Move),
         # drawn here with a thick, reliable pen.
@@ -6391,7 +6725,7 @@ class Viewport(QOpenGLWidget):
         if self._route_marker is not None:
             q = self._world_to_pixel(self.drape(self._route_marker))
             if q is not None:
-                painter.setBrush(QColor(243, 115, 41))
+                painter.setBrush(QColor.fromRgbF(*self._effective_style().selected_color))
                 painter.setPen(QPen(QColor(255, 255, 255), 1.5))
                 painter.drawEllipse(QPointF(*q), 6, 6)
                 painter.setBrush(Qt.NoBrush)
@@ -6472,8 +6806,8 @@ class Viewport(QOpenGLWidget):
             min(s.x(), c.x()), min(s.y(), c.y()),
             abs(c.x() - s.x()), abs(c.y() - s.y()),
         )
-        painter.setPen(QPen(QColor(243, 115, 41), 1.5, Qt.DashLine))
-        painter.setBrush(QColor(243, 115, 41, 26))
+        painter.setPen(QPen(QColor.fromRgbF(*self._effective_style().selected_color), 1.5, Qt.DashLine))
+        painter.setBrush(QColor(*ACCENT_RGB8, 26))
         painter.drawRect(rect)
 
     def _zoom_to_box(self, start: QPointF, end: QPointF) -> None:
@@ -6669,7 +7003,7 @@ class Viewport(QOpenGLWidget):
 
     def _draw_section_planes(self, painter: QPainter) -> None:
         """The section plane OBJECTS (frame + corner brackets + symbol):
-        orange when active, light grey when not, a solid heavier frame when
+        blue when active, light grey when not, a solid heavier frame when
         selected. Hidden by View ▸ Section Planes."""
         planes = getattr(self.scene, "section_planes", None)
         if not planes or not getattr(self.scene, "show_section_planes", True):
@@ -6694,17 +7028,17 @@ class Viewport(QOpenGLWidget):
             if not ok:
                 continue
             # Active or not, at a glance (@pacaeiro, #62, second round): the
-            # ACTIVE plane in orange, every other one light grey — the axis
+            # ACTIVE plane in blue, every other one light grey — the axis
             # colours of 0.4.9 said which way a plane cut, which stops
             # meaning anything once it is rotated. Orange is also the
             # selection's colour, so a selected plane draws its frame SOLID
             # and heavier instead of dashed.
             selected = sp in selection
             if sp.active:
-                col = QColor(243, 115, 41)
+                col = QColor.fromRgbF(*self._effective_style().active_section_color)
                 width = 2.0
             else:
-                col = QColor(178, 182, 188)
+                col = QColor.fromRgbF(*self._effective_style().inactive_section_color)
                 width = 1.4
             if selected:
                 width += 1.2
@@ -6875,7 +7209,9 @@ class Viewport(QOpenGLWidget):
         self._section_vbo.bind()
         self._section_vbo.allocate(raw, len(raw))
         self._section_vbo.release()
-        fc = getattr(style, "section_fill_color", (0.35, 0.37, 0.41))
+        fc = style.section_fill_color
+        if not style.override_section_fill:
+            fc = getattr(sp, "attrs", {}).get("fill_color", fc)
         self._gl.glEnable(GL_POLYGON_OFFSET_FILL)
         self._gl.glPolygonOffset(2.0, 2.0)
         self._set_color(fc[0], fc[1], fc[2], 1.0)
@@ -6920,7 +7256,7 @@ class Viewport(QOpenGLWidget):
         h = max(1.0, self.height())
         fov = math.radians(getattr(self.camera, "fov_deg", 45.0))
         wpp = np.maximum(dist * math.tan(fov * 0.5) * 2.0 / h, 1e-6)
-        w = (wpp * 1.25)[:, None]
+        w = (wpp * self._frame_style.section_line_width * 0.5)[:, None]
         lift = n * 0.6
         off = side * w
         q0 = a - off + lift * w
@@ -6938,7 +7274,7 @@ class Viewport(QOpenGLWidget):
         self._section_vbo.bind()
         self._section_vbo.allocate(raw, len(raw))
         self._section_vbo.release()
-        ec = self._frame_style.edge_color
+        ec = self._frame_style.section_line_color or self._frame_style.edge_color
         self._set_color(ec[0], ec[1], ec[2], 1.0)
         self._section_vao.bind()
         self._gl.glDrawArrays(GL_TRIANGLES, 0, len(a) * 6)
@@ -7096,11 +7432,11 @@ class Viewport(QOpenGLWidget):
         a screen-space mark a few pixels wide, not a line through the
         model, so it stays in the overlay where its size is in pixels."""
         guides = getattr(self.scene, "guides", None)
-        if not guides:
+        if not guides or not self._effective_style().show_guides:
             return
-        pen = QPen(QColor(70, 90, 120), 1, Qt.DashLine)
+        pen = QPen(self.construction_line_color(), 2, Qt.DashLine)
         pen.setDashPattern([14.0, 10.0])
-        sel_pen = QPen(QColor(243, 115, 41), 2, Qt.DashLine)  # selection orange
+        sel_pen = QPen(QColor.fromRgbF(*self._effective_style().selected_color), SELECTION_LINE_WIDTH, Qt.DashLine)  # selection blue
         sel_pen.setDashPattern([14.0, 10.0])
         selection = self.scene.selection
         for g in guides:
@@ -7254,7 +7590,7 @@ class Viewport(QOpenGLWidget):
         if not points:
             return
         ink = QColor(206, 66, 87)               # survey red — distinct from
-        painter.setPen(QPen(ink, 1.6))          # cyan paths / orange selection
+        painter.setPen(QPen(ink, 1.6))          # cyan paths / blue selection
         font = QFont()
         font.setPointSize(8)
         painter.setFont(font)
@@ -7277,7 +7613,7 @@ class Viewport(QOpenGLWidget):
         if not paths:
             return
         base_ink = QColor(0, 190, 210)          # cyan — reads over terrain
-        sel_ink = QColor(243, 115, 41)          # selection orange
+        sel_ink = QColor.fromRgbF(*self._effective_style().selected_color)          # selection blue
         selection = self.scene.selection
         hover_node = getattr(self, "_hover_geo_node", None)
         for path in paths:
@@ -7352,7 +7688,7 @@ class Viewport(QOpenGLWidget):
         style = getattr(self.scene, "dimension_style", {})
         col = style.get("color", [45, 55, 75])
         default_ink = QColor(col[0], col[1], col[2])
-        sel_ink = QColor(243, 115, 41)
+        sel_ink = QColor.fromRgbF(*self._effective_style().selected_color)
         selection = self.scene.selection
         font = QFont()
         font.setPointSize(int(style.get("font_size", 9)))
@@ -7395,7 +7731,7 @@ class Viewport(QOpenGLWidget):
         style = getattr(self.scene, "dimension_style", {})
         col = style.get("color", [45, 55, 75])
         default_ink = QColor(col[0], col[1], col[2])
-        sel_ink = QColor(243, 115, 41)  # selection orange
+        sel_ink = QColor.fromRgbF(*self._effective_style().selected_color)  # selection blue
         selection = self.scene.selection
         font = QFont()
         font.setPointSize(int(style.get("font_size", 9)))

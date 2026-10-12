@@ -123,6 +123,7 @@ class Scene:
     # Active display style (Styles): face mode, edges, background.
     # The viewport reads it every frame; scenes snapshot it (core/style.py).
     display_style: object = field(default_factory=lambda: _make_style())
+    styles: list = field(default_factory=list)
     # Sun shadows (core/sun.py): whether they draw, and the local date/time
     # the sun stands at. Document data — the shadow study is a deliverable.
     shadows: object = field(default_factory=lambda: _make_shadows())
@@ -622,7 +623,8 @@ class Scene:
                 or self.guides or self.geo_points or self.text_labels
                 or self.saved_views or self.scene_folders or self.layer_folders
                 or len(self.layers) > 1 or self.compositions
-                or self.image_planes or self.plugin_data):
+                or self.image_planes or self.plugin_data or self.styles
+                or self.display_style.to_dict() != _make_style().to_dict()):
             self.mesh.clear()
             self.groups.clear()
             self.dimensions.clear()
@@ -647,6 +649,7 @@ class Scene:
             self.back_face_color = None
             self.active_ifc = None
             self.display_style = _make_style()
+            self.styles.clear()
             self.shadows = _make_shadows()
             self.section_planes.clear()
             self.show_section_planes = True

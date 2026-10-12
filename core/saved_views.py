@@ -14,6 +14,8 @@ that carry eye/target/up cameras (e.g. .skp) convert once at import time.
 """
 from __future__ import annotations
 
+import copy
+
 
 class SavedView:
     """A named camera + layer-visibility snapshot."""
@@ -41,7 +43,7 @@ class SavedView:
         self.hidden_layer_folders = list(hidden_layer_folders or [])
         #: Display-style snapshot (core.style.Style.to_dict()) or ``None`` —
         #: a scene remembers the style it was saved with.
-        self.style = dict(style) if style else None
+        self.style = copy.deepcopy(style) if style else None
         #: Section state (scenes remember it): the ACTIVE plane's
         #: uid (or None = no cut) + the two visibility toggles. ``None``
         #: entirely = a view loaded from a document older than sections,
@@ -189,7 +191,7 @@ class SavedView:
         if self.hidden_layer_folders:
             entry["hidden_layer_folders"] = list(self.hidden_layer_folders)
         if self.style:
-            entry["style"] = dict(self.style)
+            entry["style"] = copy.deepcopy(self.style)
         if self.section is not None:
             entry["section"] = dict(self.section)
         if self.georef is not None:

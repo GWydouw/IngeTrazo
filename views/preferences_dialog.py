@@ -101,6 +101,16 @@ class PreferencesDialog(QDialog):
             "view keeps its own style. Applies at once."))
         form.addRow(tr("Theme:"), self._theme)
 
+        from PySide6.QtGui import QColor
+        from views.construction_color import ConstructionColorControl
+        key = getattr(window.viewport, "construction_color_key", "display/construction_line_color")
+        default = getattr(window.viewport, "construction_color_default", "#465a78")
+        self._construction_color_key = key
+        color = QColor(str(st.value(key, default)))
+        self._construction_color = ConstructionColorControl(
+            color if color.isValid() else QColor(default))
+        form.addRow("Construction line color:", self._construction_color)
+
         self._rest = QComboBox()
         for key, label in _REST_MODES:
             self._rest.addItem(tr(label), key)
@@ -377,6 +387,10 @@ class PreferencesDialog(QDialog):
     # ---- Apply --------------------------------------------------------------
     def accept(self) -> None:  # noqa: D102 — QDialog override
         st = QSettings()
+        st.setValue(self._construction_color_key, self._construction_color.color().name())
+        viewport = self._window.viewport
+        if hasattr(viewport, "update"):
+            viewport.update()
 
         # Units of the open document (issue #33).
         from core import units as _units

@@ -19,8 +19,9 @@ Face modes (Face Styles):
 - ``xray``        Everything translucent, edges always visible — the ones
                   behind a face washed toward the background.
 
-Deferred (documented, not lost): back edges, depth cue, extensions,
-endpoints, jitter, watermarks, per-material edge colour.
+Select/Edit/Mix editing categories share this serialised style record.
+Screen-space edge effects, watermarks and ambient occlusion are opt-in;
+legacy documents retain their historical defaults.
 """
 from __future__ import annotations
 
@@ -64,50 +65,128 @@ class Style:
     section_fill: bool = True
     section_fill_color: tuple = (0.35, 0.37, 0.41)
 
+    uid: str = ""
+    description: str = ""
+    profile_width: int = 2
+    depth_cue: bool = False
+    depth_cue_width: int = 4
+    extensions: bool = False
+    extension_length: int = 2
+    endpoints: bool = False
+    endpoint_size: int = 7
+    dashes: bool = True
+    edge_color_mode: str = "all_same"
+    material_transparency: bool = True
+    transparency_quality: str = "faster"
+    xray_opacity: float = 0.6
+    ambient_occlusion: bool = False
+    ao_default_color: bool = True
+    ao_color: tuple = (0.0, 0.0, 0.0)
+    ao_distance: float = 1.0
+    ao_intensity: float = 0.5
+    ao_multiplier: float = 1.0
+    ground: bool = True
+    horizon_color: tuple | None = None
+    ground_opacity: float = 1.0
+    show_ground_below: bool = True
+    selected_color: tuple = (0.0, 0.0, 1.0)
+    locked_color: tuple = (1.0, 0.0, 0.0)
+    guide_color: tuple | None = None
+    inactive_section_color: tuple = (0.698, 0.714, 0.737)
+    active_section_color: tuple = (0.0, 0.0, 1.0)
+    section_line_color: tuple | None = None
+    section_line_width: float = 2.5
+    show_axes: bool = True
+    show_guides: bool = True
+    show_hidden_geometry: bool = False
+    show_hidden_objects: bool = False
+    show_section_planes: bool = True
+    show_section_cuts: bool = True
+    override_section_fill: bool = False
+    display_watermarks: bool = True
+    watermarks: list = field(default_factory=list)
+    photo_image: str = ""
+    foreground_photo: bool = False
+    foreground_photo_opacity: float = 0.8
+    background_photo: bool = False
+    background_photo_opacity: float = 1.0
+
     def to_dict(self) -> dict:
-        return {
-            "name": self.name,
-            "face_mode": self.face_mode,
-            "color_by_layer": self.color_by_layer,
-            "edges": self.edges,
-            "profiles": self.profiles,
-            "back_edges": self.back_edges,
-            "edge_color": list(self.edge_color),
-            "front_color": list(self.front_color),
-            "back_color": (list(self.back_color)
-                           if self.back_color is not None else None),
-            "background": list(self.background),
-            "sky": self.sky,
-            "sky_color": list(self.sky_color),
-            "ground_color": list(self.ground_color),
-            "section_fill": self.section_fill,
-            "section_fill_color": list(self.section_fill_color),
-        }
+        from dataclasses import asdict
+        def json_value(value):
+            if isinstance(value, (list, tuple)):
+                return [json_value(item) for item in value]
+            if isinstance(value, dict):
+                return {key: json_value(item) for key, item in value.items()}
+            return value
+        return json_value(asdict(self))
 
     @classmethod
     def from_dict(cls, raw: dict) -> "Style":
-        mode = raw.get("face_mode", "textures")
-        if mode not in FACE_MODES:
-            mode = "textures"
-        d = cls()
-        return cls(
-            name=raw.get("name", d.name),
-            face_mode=mode,
-            color_by_layer=bool(raw.get("color_by_layer", False)),
-            edges=bool(raw.get("edges", d.edges)),
-            profiles=bool(raw.get("profiles", d.profiles)),
-            back_edges=bool(raw.get("back_edges", d.back_edges)),
-            edge_color=tuple(raw.get("edge_color", d.edge_color)),
-            front_color=tuple(raw.get("front_color", d.front_color)),
-            back_color=_opt_rgb(raw.get("back_color")),
-            background=tuple(raw.get("background", d.background)),
-            sky=bool(raw.get("sky", d.sky)),
-            sky_color=tuple(raw.get("sky_color", d.sky_color)),
-            ground_color=tuple(raw.get("ground_color", d.ground_color)),
-            section_fill=bool(raw.get("section_fill", d.section_fill)),
-            section_fill_color=tuple(raw.get("section_fill_color",
-                                             d.section_fill_color)),
-        )
+        from dataclasses import fields
+        import copy
+        import math
+        default = cls()
+        values = {}
+        for spec in fields(cls):
+            fallback = getattr(default, spec.name)
+            value = raw.get(spec.name, fallback)
+            if isinstance(fallback, bool):
+                value = bool(value)
+            elif isinstance(fallback, (float, int)):
+                try:
+                    value = type(fallback)(value)
+                    if not math.isfinite(value):
+                        value = fallback
+                except (TypeError, ValueError, OverflowError):
+                    value = fallback
+            elif isinstance(fallback, tuple) or spec.name in (
+                    "back_color", "guide_color", "horizon_color", "section_line_color"):
+                value = _opt_rgb(value)
+                if value is None:
+                    value = fallback
+                elif not all(math.isfinite(c) for c in value):
+                    value = fallback
+                else:
+                    value = tuple(max(0.0, min(1.0, c)) for c in value)
+            elif isinstance(fallback, str):
+                value = value if isinstance(value, str) else fallback
+            elif isinstance(fallback, list):
+                value = copy.deepcopy(value) if isinstance(value, list) else []
+            values[spec.name] = value
+        if "ground" not in raw:
+            values["ground"] = values["sky"]  # legacy sky switch controlled both halves
+        for key, choices in {"face_mode": FACE_MODES,
+                             "edge_color_mode": ("all_same", "by_material", "by_axis"),
+                             "transparency_quality": ("faster", "nicer")}.items():
+            if values[key] not in choices:
+                values[key] = getattr(default, key)
+        for key in ("profile_width", "depth_cue_width", "endpoint_size", "extension_length"):
+            values[key] = max(1, min(32, values[key]))
+        values["section_line_width"] = max(1.0, min(32.0, values["section_line_width"]))
+        for key in ("xray_opacity", "ground_opacity", "ao_intensity",
+                    "foreground_photo_opacity", "background_photo_opacity"):
+            values[key] = max(0.0, min(1.0, values[key]))
+        values["ao_distance"] = max(0.001, values["ao_distance"])
+        values["ao_multiplier"] = max(0.1, min(100.0, values["ao_multiplier"]))
+        values["watermarks"] = [entry for entry in values["watermarks"]
+                               if isinstance(entry, dict) and isinstance(entry.get("image"), str)]
+        for mark in values["watermarks"]:
+            for key, fallback, low, high in (("opacity", .5, 0., 1.), ("scale", .25, .01, 2.)):
+                if key not in mark:
+                    continue
+                try:
+                    amount = float(mark.get(key, fallback))
+                    mark[key] = max(low,min(high,amount)) if math.isfinite(amount) else fallback
+                except (TypeError,ValueError):
+                    mark[key] = fallback
+            if "layer" in mark and mark.get("layer") not in ("background", "overlay"):
+                mark["layer"] = "overlay"
+            if "position" in mark and mark.get("position") not in ("top_left", "top_right", "center", "bottom_left", "bottom_right", "stretch", "tile"):
+                mark["position"] = "bottom_right"
+            if "name" in mark:
+                mark["name"] = str(mark["name"])
+        return cls(**values)
 
     def copy(self) -> "Style":
         return Style.from_dict(self.to_dict())
@@ -141,10 +220,15 @@ def effective_back_color(style, scene=None) -> tuple:
 
 # The usual style collections, adapted: Default (working look),
 # Architectural (clean white presentation), and the classic face styles.
-def style_by_name(name: str) -> Style | None:
+def style_by_name(name: str, scene=None) -> Style | None:
     """A COPY of the style called ``name`` — a built-in preset first, then
     the user's saved library (composer frames keep a ``"style:<name>"``
     reference, so both must resolve here). ``None`` if unknown."""
+    if scene is not None:
+        from core.style_library import model_styles
+        for saved in model_styles(scene):
+            if saved.name == name:
+                return saved.copy()
     for preset in BUILTIN_STYLES:
         if preset.name == name:
             return preset.copy()
@@ -156,14 +240,14 @@ def style_by_name(name: str) -> Style | None:
 
 BUILTIN_STYLES: list[Style] = [
     Style(name="Default"),
-    Style(name="Architectural", background=(1.0, 1.0, 1.0), sky=False),
+    Style(name="Architectural", background=(1.0, 1.0, 1.0), sky=False, ground=False),
     Style(name="Shaded", face_mode="shaded"),
     Style(name="Hidden line", face_mode="hidden_line",
-          background=(1.0, 1.0, 1.0), sky=False),
+          background=(1.0, 1.0, 1.0), sky=False, ground=False),
     Style(name="Monochrome", face_mode="monochrome",
-          background=(1.0, 1.0, 1.0), sky=False),
+          background=(1.0, 1.0, 1.0), sky=False, ground=False),
     Style(name="Wireframe", face_mode="wireframe",
-          background=(1.0, 1.0, 1.0), sky=False),
+          background=(1.0, 1.0, 1.0), sky=False, ground=False),
     Style(name="X-ray", face_mode="xray"),
 ]
 

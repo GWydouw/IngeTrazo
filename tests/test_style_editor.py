@@ -270,15 +270,15 @@ def test_panel_back_swatch_shows_the_tint_that_draws(settings_file,
     win = _Win()
     panel = StylesPanel(win)
     style = win.viewport.scene.display_style
-    # Automatic: the swatch shows the default blue-grey (158,178,199).
-    assert "rgb(158,178,199)" in panel._back_c.styleSheet()
+    # Automatic: the swatch shows the default blue-grey.
+    assert panel._back_c.color().getRgb()[:3] == (158,179,199)
 
     import views.color_dialog as color_dialog
     monkeypatch.setattr(color_dialog.QColorDialog, "getColor",
                         staticmethod(lambda *a, **k: QColor(255, 0, 0)))
     panel._pick_color("Back color", "back_color")
     assert style.back_color == (1.0, 0.0, 0.0)
-    assert "rgb(255,0,0)" in panel._back_c.styleSheet()
+    assert panel._back_c.color().getRgb()[:3] == (255,0,0)
     assert style.front_color == (1.0, 1.0, 1.0)     # front untouched
 
 
@@ -293,6 +293,9 @@ def test_a_swatch_tooltip_keeps_the_tooltip_colours(settings_file):
     win = _Win()
     panel = StylesPanel(win)
     swatch = panel._front_c                          # white (255,255,255)
+    panel._category_changed(1)
+    panel.show()
+    QApplication.processEvents()
     swatch.show()
     QToolTip.showText(QPoint(10, 10), "tip", swatch)
     QApplication.processEvents()
@@ -304,6 +307,7 @@ def test_a_swatch_tooltip_keeps_the_tooltip_colours(settings_file):
     finally:
         QToolTip.hideText()
         swatch.close()
+        panel.close()
 
 
 def test_back_color_hint_only_where_back_faces_cannot_show(settings_file):
